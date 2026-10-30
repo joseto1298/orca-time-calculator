@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.7.13"
+# version = "0.7.14"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -782,7 +782,10 @@ PAGE = r"""<!DOCTYPE html>
     });
   }
 
-  document.getElementById("refreshBtn").addEventListener("click", requestState);
+  document.getElementById("refreshBtn").addEventListener("click", function () {
+    tick();
+    requestState();
+  });
   document.getElementById("modeSeq").addEventListener("click", function () { setMode("seq"); });
   document.getElementById("modeInd").addEventListener("click", function () { setMode("ind"); });
 
