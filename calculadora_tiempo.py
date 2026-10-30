@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.7.9"
+# version = "0.7.10"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -29,6 +29,9 @@ _STALE_NOTE = "Las placas cambiaron. Lamina de nuevo para actualizar los tiempos
 _NAME_CACHE = {}
 _TAIL_CACHE = {}
 _SCANNING = False
+_NO_DATA_NOTE = None
+_NO_DATA_AT = 0.0
+_NO_DATA_TTL = 30.0
 _ICON_PATH = None
 _ICON_B64 = "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"
 
@@ -238,11 +241,11 @@ def _latest_session(project=None):
         return None
     days = _dirs(root)
     days.sort(key=lambda item: (item[1], item[0]), reverse=True)
-    for day_name, _mtime in days[:7]:
+    for day_name, _mtime in days[:2]:
         day_path = os.path.join(root, day_name)
         sessions = _dirs(day_path)
         sessions.sort(key=lambda item: item[0], reverse=True)
-        for session_name, _ in sessions[:50]:
+        for session_name, _ in sessions[:10]:
             session = os.path.join(day_path, session_name)
             metadata = os.path.join(session, "Metadata")
             if not _gcode_files(metadata):
@@ -309,6 +312,18 @@ def _request_read_permissions():
             requester(fs_read=[os.path.join(root, "*")])
     except Exception as exc:
         print("[time-calc] permisos: %s" % exc)
+
+
+def _set_no_data(note):
+    global _NO_DATA_NOTE, _NO_DATA_AT
+    _NO_DATA_NOTE = note
+    _NO_DATA_AT = time.time()
+
+
+def _clear_no_data():
+    global _NO_DATA_NOTE, _NO_DATA_AT
+    _NO_DATA_NOTE = None
+    _NO_DATA_AT = 0.0
 
 
 def _forget_live_plates():
@@ -786,21 +801,24 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
             live = _live_plates(force=force_live)
             if live is not None and live.get("count") == 0:
                 return {"note": "La placa está vacía. Añade una pieza y lamina."}
+            if _NO_DATA_NOTE and time.time() - _NO_DATA_AT < _NO_DATA_TTL:
+                return {"note": _NO_DATA_NOTE}
             session = _latest_session(_CURRENT_PROJECT)
             if not session:
                 if _CURRENT_PROJECT:
-                    return {
-                        "note": "No encontré G-code de este proyecto. Lamina la pieza y pulsa Refrescar."
-                    }
-                return {
-                    "note": "No encontré G-code en %TEMP%\\orcaslicer_model. Lamina la pieza y pulsa Refrescar."
-                }
+                    note = "No encontré G-code de este proyecto. Lamina la pieza y pulsa Refrescar."
+                else:
+                    note = "No encontré G-code en %TEMP%\\orcaslicer_model. Lamina la pieza y pulsa Refrescar."
+                _set_no_data(note)
+                return {"note": note}
 
             folder = os.path.join(session, "Metadata")
             plater_names = _plater_names(session)
             files = _gcode_files(folder)
             if not files:
-                return {"note": "La carpeta de G-code no contiene placas válidas."}
+                note = "La carpeta de G-code no contiene placas válidas."
+                _set_no_data(note)
+                return {"note": note}
 
             live_names = live.get("names", {}) if live else {}
             if live and live.get("count"):
@@ -842,7 +860,10 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 })
 
             if not plates:
-                return {"note": "La carpeta de G-code no contiene placas válidas."}
+                note = "La carpeta de G-code no contiene placas válidas."
+                _set_no_data(note)
+                return {"note": note}
+            _clear_no_data()
 
             total_secs = total_mm = total_g = total_cost = None
             for plate in plates:
@@ -914,17 +935,20 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                     return
                 _STALE = False
                 _forget_live_plates()
+                _clear_no_data()
                 self.post_message({"type": "state", **self._scan()})
             elif event == orca.LifecycleEvent.ProjectOpened:
                 _STALE = False
                 _LIVE_PLATE_NAMES.clear()
                 _forget_live_plates()
+                _clear_no_data()
                 _CURRENT_PROJECT = getattr(ctx, "name", None)
                 self.post_message({"type": "state", **self._scan()})
             elif event in (orca.LifecycleEvent.NewProject, orca.LifecycleEvent.ProjectClosed):
                 _STALE = False
                 _LIVE_PLATE_NAMES.clear()
                 _forget_live_plates()
+                _clear_no_data()
                 _CURRENT_PROJECT = None
                 self.post_message({
                     "type": "state",
@@ -932,6 +956,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                     "note": "Abre o lamina un proyecto para ver la estimación.",
                 })
             elif event == orca.LifecycleEvent.SliceStarted:
+                _clear_no_data()
                 self.post_message({
                     "type": "state",
                     "reset": True,
@@ -949,6 +974,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 _STALE = True
                 _LIVE_PLATE_NAMES.clear()
                 _forget_live_plates()
+                _clear_no_data()
                 self.post_message({
                     "type": "state",
                     "reset": True,

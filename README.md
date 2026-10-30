@@ -22,7 +22,7 @@ Plugin que muestra la **hora actual** y, a partir de la estimación del laminado
 
 1. Abre OrcaSlicer.
 2. Ve a **Plugins → Install local plugin**.
-3. Selecciona `calculadora_tiempo.py` o el wheel `dist/hora_de_finalizacion-0.7.9-py3-none-any.whl`.
+3. Selecciona `calculadora_tiempo.py` o el wheel `dist/hora_de_finalizacion-0.7.10-py3-none-any.whl`.
 4. Acepta una vez el permiso de lectura para `%TEMP%\orcaslicer_model`; el plugin lo pide como carpeta completa para no preguntar sesión por sesión. El icono de la pestaña va incrustado en el `.py`; no hace falta copiar imágenes junto al plugin.
 
 ## Uso
@@ -34,6 +34,7 @@ Plugin que muestra la **hora actual** y, a partir de la estimación del laminado
 5. Si añades, borras o mueves placas, la pestaña te pedirá laminar de nuevo: los tiempos salen del G-code. Renombrar una placa se refleja al momento.
 6. La pestaña lee las placas actuales del proyecto, aunque no hayas guardado, para no mostrar G-code antiguo de placas borradas.
 7. Si la placa está vacía, muestra un aviso y no recorre `%TEMP%` ni vuelve a pedir permisos.
+8. Si no encuentra G-code, guarda el aviso 30 segundos para no recorrer la caché en cada refresco.
 
 La pestaña se actualiza sola al empezar y terminar un laminado, y cada segundo refresca el reloj y las horas de fin. Si el laminado falla o se cancela, se limpian los datos anteriores en lugar de mostrar una estimación obsoleta.
 
@@ -72,7 +73,7 @@ Al modificar el plugin, **sube la versión** en el encabezado PEP 723 (`# versio
 ## Archivos
 
 - `calculadora_tiempo.py` — plugin completo (metadatos, captura del G-code y pestaña de UI).
-- `dist/hora_de_finalizacion-0.7.9-py3-none-any.whl` — paquete instalable con el plugin y el icono.
+- `dist/hora_de_finalizacion-0.7.10-py3-none-any.whl` — paquete instalable con el plugin y el icono.
 - `build_wheel.py` — genera el wheel a partir del `.py` y `3.png`.
 - `Captura de pantalla.png` — captura de la pestaña Tiempo usada en este README.
 - `AGENTS.md` — notas para asistentes/agentes que trabajen en el repositorio.
