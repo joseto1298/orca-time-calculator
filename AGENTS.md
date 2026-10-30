@@ -36,5 +36,5 @@
 - The duration inputs are intentionally `readonly`; plates render as kanban cards.
 - Duration formats handled: `; total estimated time:`, `; model printing time:`, `; estimated printing time (normal mode) =`, generic `; estimated printing time...=`, `; TIME: <sec>`, `; print time:`, plus `1:23:45` and `2d3h15m` via `_parse_duration`.
 - Filament/cost regexes prefer `total ...` lines and support multiextruder comma-separated values via `_sum_floats`.
-- `orca.request_permissions` only pre-approves exact paths (no globs/prefixes); `%TEMP%` cannot be pre-approved as a root. The first scan of each new session may still show permission dialogs; expected, accepted once.
+- `register_capabilities()` calls `orca.request_permissions(fs_read=[<temp>/orcaslicer_model/*])`; the trailing `/*` is a directory-tree grant, so one prompt covers future sessions instead of one per G-code path. Older builds that ignore tree grants may still prompt per session.
 - Reset/error messages are pushed as `{"type":"state","reset":true,"note":...}`; JS `resetState()` clears duration, KPIs, hero, tag and plate cards before rendering.

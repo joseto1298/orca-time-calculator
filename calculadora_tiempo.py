@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.7.8"
+# version = "0.7.9"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -299,6 +299,16 @@ def _plate_data_from_3mf(path):
     }
     _NAME_CACHE[key] = dict(data)
     return data
+
+
+def _request_read_permissions():
+    try:
+        requester = getattr(orca, "request_permissions", None)
+        root = _temp_root()
+        if requester and root:
+            requester(fs_read=[os.path.join(root, "*")])
+    except Exception as exc:
+        print("[time-calc] permisos: %s" % exc)
 
 
 def _forget_live_plates():
@@ -951,4 +961,5 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
 @orca.plugin
 class TimeCalculatorPlugin(orca.base):
     def register_capabilities(self):
+        _request_read_permissions()
         orca.register_capability(TimeCalculatorPage)
