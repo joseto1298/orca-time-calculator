@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.7.16"
+# version = "0.7.17"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -537,6 +537,13 @@ PAGE = r"""<!DOCTYPE html>
   .pc-dur { width: 100%; margin-top: 2px; }
   input[readonly] { opacity: .85; }
   .pc-meta { color: var(--muted); margin-top: 6px; }
+  .loading-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  .spinner { width: 16px; height: 16px; border-radius: 50%;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    animation: spin .7s linear infinite; }
+  .spinner[hidden] { display: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  button:disabled { opacity: .6; cursor: wait; }
 </style>
 </head>
 <body>
@@ -568,9 +575,10 @@ PAGE = r"""<!DOCTYPE html>
       <div class="kpi"><div class="k">Peso</div><div class="v" id="printWeight">—</div></div>
       <div class="kpi"><div class="k">Coste</div><div class="v" id="printCost">—</div></div>
     </div>
-    <div class="diag warn" id="diag">Lamina la pieza y pulsa Refrescar. Busco el G-code en la caché temporal de OrcaSlicer (%TEMP%\orcaslicer_model).</div>
-    <div style="margin-top:10px;">
+    <div class="diag warn" id="diag">Lamina la pieza y pulsa Refrescar. Usaré el G-code exacto de ese laminado.</div>
+    <div class="loading-row">
       <button class="ghost" id="refreshBtn">Refrescar</button>
+      <span class="spinner" id="loading" role="status" aria-label="Cargando datos" hidden></span>
     </div>
   </div>
 
@@ -582,6 +590,21 @@ PAGE = r"""<!DOCTYPE html>
 <script>
 (function () {
   var bridge = window.orca || (typeof orca !== "undefined" ? orca : null);
+  var loadingTimer = null;
+
+  function setLoading(on) {
+    var spinner = document.getElementById("loading");
+    var button = document.getElementById("refreshBtn");
+    if (loadingTimer && typeof clearTimeout === "function") {
+      clearTimeout(loadingTimer);
+    }
+    loadingTimer = null;
+    if (spinner) spinner.hidden = !on;
+    if (button) button.disabled = !!on;
+    if (on && typeof setTimeout === "function") {
+      loadingTimer = setTimeout(function () { setLoading(false); }, 20000);
+    }
+  }
   var DURATION_SECONDS = null;
   var PLATES = [];
   var MODE = "ind";
@@ -745,13 +768,14 @@ PAGE = r"""<!DOCTYPE html>
   }
 
   function applyState(state) {
+    setLoading(false);
     var diag = document.getElementById("diag");
     resetState();
     if (!state || state.reset) {
       diag.className = "diag warn";
       diag.textContent = (state && state.note)
         ? String(state.note)
-        : "Lamina la pieza y pulsa Refrescar. Busco el G-code en la caché temporal de OrcaSlicer (%TEMP%\\orcaslicer_model).";
+        : "Lamina la pieza y pulsa Refrescar. Usaré el G-code exacto de ese laminado.";
       tick();
       return;
     }
@@ -780,6 +804,7 @@ PAGE = r"""<!DOCTYPE html>
   }
 
   function requestState() {
+    setLoading(true);
     if (bridge && bridge.postMessage) bridge.postMessage({ type: "get_state" });
   }
 
