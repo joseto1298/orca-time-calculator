@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.7.10"
+# version = "0.7.11"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -20,6 +20,7 @@ import zipfile
 import orca
 
 _CURRENT_PROJECT = None
+_CURRENT_SESSION = None
 _LIVE_PLATE_NAMES = {}
 _LIVE_PLATES = None
 _LIVE_PLATES_AT = 0.0
@@ -233,6 +234,19 @@ def _gcode_files(folder):
         return [(index, name) for index, name in indexed]
     others.sort()
     return [(None, name) for name in others]
+
+
+def _session_from_gcode(path):
+    if not path:
+        return None
+    full = os.path.abspath(str(path))
+    metadata = os.path.dirname(full)
+    if os.path.basename(metadata).lower() != "metadata":
+        return None
+    session = os.path.dirname(metadata)
+    if os.path.isdir(session):
+        return session
+    return None
 
 
 def _latest_session(project=None):
@@ -803,7 +817,9 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 return {"note": "La placa está vacía. Añade una pieza y lamina."}
             if _NO_DATA_NOTE and time.time() - _NO_DATA_AT < _NO_DATA_TTL:
                 return {"note": _NO_DATA_NOTE}
-            session = _latest_session(_CURRENT_PROJECT)
+            session = _CURRENT_SESSION if _CURRENT_SESSION and os.path.isdir(_CURRENT_SESSION) else None
+            if not session:
+                session = _latest_session(_CURRENT_PROJECT)
             if not session:
                 if _CURRENT_PROJECT:
                     note = "No encontré G-code de este proyecto. Lamina la pieza y pulsa Refrescar."
@@ -896,7 +912,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
             _SCANNING = False
 
     def on_lifecycle_event(self, event, ctx):
-        global _CURRENT_PROJECT, _STALE
+        global _CURRENT_PROJECT, _CURRENT_SESSION, _STALE
         if _LIVE_EXPORTING:
             return
         try:
@@ -908,6 +924,8 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
             plate_created = getattr(life, "PlateCreated", None)
             plate_deleted = getattr(life, "PlateDeleted", None)
             plate_renamed = getattr(life, "PlateRenamed", None)
+            gcode_started = getattr(life, "GCodeExportStarted", None)
+            gcode_finished = getattr(life, "GCodeExportFinished", None)
             object_events = tuple(
                 value for value in (
                     getattr(life, "ObjectAdded", None),
@@ -937,11 +955,19 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 _forget_live_plates()
                 _clear_no_data()
                 self.post_message({"type": "state", **self._scan()})
+            elif event in (gcode_started, gcode_finished):
+                if not (error_code is not None and code == error_code):
+                    session = _session_from_gcode(getattr(ctx, "msg", "") or "")
+                    if session:
+                        _CURRENT_SESSION = session
+                        _clear_no_data()
+                        _forget_live_plates()
             elif event == orca.LifecycleEvent.ProjectOpened:
                 _STALE = False
                 _LIVE_PLATE_NAMES.clear()
                 _forget_live_plates()
                 _clear_no_data()
+                _CURRENT_SESSION = None
                 _CURRENT_PROJECT = getattr(ctx, "name", None)
                 self.post_message({"type": "state", **self._scan()})
             elif event in (orca.LifecycleEvent.NewProject, orca.LifecycleEvent.ProjectClosed):
@@ -949,6 +975,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 _LIVE_PLATE_NAMES.clear()
                 _forget_live_plates()
                 _clear_no_data()
+                _CURRENT_SESSION = None
                 _CURRENT_PROJECT = None
                 self.post_message({
                     "type": "state",
@@ -956,6 +983,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                     "note": "Abre o lamina un proyecto para ver la estimación.",
                 })
             elif event == orca.LifecycleEvent.SliceStarted:
+                _CURRENT_SESSION = None
                 _clear_no_data()
                 self.post_message({
                     "type": "state",
