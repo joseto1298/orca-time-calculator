@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.7.11"
+# version = "0.7.12"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -316,6 +316,15 @@ def _plate_data_from_3mf(path):
     }
     _NAME_CACHE[key] = dict(data)
     return data
+
+
+def _live_project_path():
+    try:
+        host = orca.host
+        path = host.plater().project_path()
+        return str(path) if path else None
+    except Exception:
+        return None
 
 
 def _request_read_permissions():
@@ -819,7 +828,8 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 return {"note": _NO_DATA_NOTE}
             session = _CURRENT_SESSION if _CURRENT_SESSION and os.path.isdir(_CURRENT_SESSION) else None
             if not session:
-                session = _latest_session(_CURRENT_PROJECT)
+                project = _live_project_path() or _CURRENT_PROJECT
+                session = _latest_session(project)
             if not session:
                 if _CURRENT_PROJECT:
                     note = "No encontré G-code de este proyecto. Lamina la pieza y pulsa Refrescar."

@@ -22,7 +22,7 @@ Plugin que muestra la **hora actual** y, a partir de la estimación del laminado
 
 1. Abre OrcaSlicer.
 2. Ve a **Plugins → Install local plugin**.
-3. Selecciona `calculadora_tiempo.py` o el wheel `dist/hora_de_finalizacion-0.7.11-py3-none-any.whl`.
+3. Selecciona `calculadora_tiempo.py` o el wheel `dist/hora_de_finalizacion-0.7.12-py3-none-any.whl`.
 4. Acepta una vez el permiso de lectura para `%TEMP%\orcaslicer_model`; el plugin lo pide como carpeta completa para no preguntar sesión por sesión. El icono de la pestaña va incrustado en el `.py`; no hace falta copiar imágenes junto al plugin.
 
 ## Uso
@@ -43,7 +43,7 @@ La pestaña se actualiza sola al empezar y terminar un laminado, y cada segundo 
 - Al laminar, OrcaSlicer escribe el G-code de previsualización en:
   `%TEMP%\orcaslicer_model\<Día>\<HH_MM_SS>#<pid>#<id>\Metadata\.<pid>.<n>.gcode`
 - Al laminar, el plugin captura la ruta exacta del G-code exportado y usa esa sesión concreta; solo si aún no ha visto un laminado busca la sesión más reciente. Lee las `.gcode` de su carpeta `Metadata`, cruzadas con las placas actuales del proyecto (aunque no estén guardadas) para ignorar G-code antiguo de placas borradas.
-- Si hay un proyecto abierto, filtra por el nombre del proyecto usando `origin.txt`; así no muestra la sesión de otro proyecto. Con proyectos sin título usa la sesión más reciente; si el proyecto tiene nombre y no hay coincidencia, muestra un aviso en vez de datos de otro proyecto.
+- Si hay un proyecto guardado, usa su ruta real para localizar la sesión; así no recorre días antiguos ni muestra la sesión de otro proyecto. Con proyectos sin título usa la sesión más reciente.
 - Las estadísticas están al **final** del archivo, después de `; CONFIG_BLOCK_END`, por eso se lee el pie del G-code y no la cabecera.
 - Los nombres de placa salen de `plater_name` en el proyecto actual (exportado aunque no esté guardado); si están vacíos, se usa «Placa N».
 - El total es la suma de todas las placas. En **Secuencial** el fin principal usa el total y cada tarjeta el fin acumulado; en **Independiente** cada placa empieza ahora y el fin principal es la placa más larga.
@@ -73,7 +73,7 @@ Al modificar el plugin, **sube la versión** en el encabezado PEP 723 (`# versio
 ## Archivos
 
 - `calculadora_tiempo.py` — plugin completo (metadatos, captura del G-code y pestaña de UI).
-- `dist/hora_de_finalizacion-0.7.11-py3-none-any.whl` — paquete instalable con el plugin y el icono.
+- `dist/hora_de_finalizacion-0.7.12-py3-none-any.whl` — paquete instalable con el plugin y el icono.
 - `build_wheel.py` — genera el wheel a partir del `.py` y `3.png`.
 - `Captura de pantalla.png` — captura de la pestaña Tiempo usada en este README.
 - `AGENTS.md` — notas para asistentes/agentes que trabajen en el repositorio.
