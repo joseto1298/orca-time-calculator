@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.7.12"
+# version = "0.7.13"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -255,11 +255,11 @@ def _latest_session(project=None):
         return None
     days = _dirs(root)
     days.sort(key=lambda item: (item[1], item[0]), reverse=True)
-    for day_name, _mtime in days[:2]:
+    for day_name, _mtime in days[:1]:
         day_path = os.path.join(root, day_name)
         sessions = _dirs(day_path)
         sessions.sort(key=lambda item: item[0], reverse=True)
-        for session_name, _ in sessions[:10]:
+        for session_name, _ in sessions[:3]:
             session = os.path.join(day_path, session_name)
             metadata = os.path.join(session, "Metadata")
             if not _gcode_files(metadata):
@@ -267,7 +267,7 @@ def _latest_session(project=None):
             if project:
                 origin = _read_origin(session)
                 if not origin or not _project_matches(origin, project):
-                    continue
+                    return None
             return session
     return None
 
@@ -839,7 +839,6 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 return {"note": note}
 
             folder = os.path.join(session, "Metadata")
-            plater_names = _plater_names(session)
             files = _gcode_files(folder)
             if not files:
                 note = "La carpeta de G-code no contiene placas válidas."
@@ -876,7 +875,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 live_name = _LIVE_PLATE_NAMES.get(index) if index is not None else None
                 plates.append({
                     "index": index,
-                    "name": live_name or live_names.get(index) or plater_names.get(ordinal) or ("Placa %d" % plate_no),
+                    "name": live_name or live_names.get(index) or ("Placa %d" % plate_no),
                     "file": name,
                     "duration_seconds": seconds,
                     "filament_mm": filament_mm,
