@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.7.15"
+# version = "0.7.16"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -21,6 +21,7 @@ import orca
 
 _CURRENT_PROJECT = None
 _CURRENT_SESSION = None
+_CURRENT_GCODE_PATHS = []
 _LIVE_PLATE_NAMES = {}
 _LIVE_PLATES = None
 _LIVE_PLATES_AT = 0.0
@@ -234,6 +235,22 @@ def _gcode_files(folder):
         return [(index, name) for index, name in indexed]
     others.sort()
     return [(None, name) for name in others]
+
+
+def _record_gcode_path(path):
+    global _CURRENT_SESSION
+    if not path:
+        return
+    full = os.path.abspath(str(path))
+    metadata = os.path.dirname(full)
+    if os.path.basename(metadata).lower() != "metadata":
+        return
+    if not os.path.isfile(full):
+        return
+    if full not in _CURRENT_GCODE_PATHS:
+        _CURRENT_GCODE_PATHS.append(full)
+        _CURRENT_GCODE_PATHS.sort()
+    _CURRENT_SESSION = os.path.dirname(metadata)
 
 
 def _session_from_gcode(path):
@@ -819,16 +836,17 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 return {"note": "La placa está vacía. Añade una pieza y lamina."}
             if _NO_DATA_NOTE and time.time() - _NO_DATA_AT < _NO_DATA_TTL:
                 return {"note": _NO_DATA_NOTE}
-            session = _CURRENT_SESSION if _CURRENT_SESSION and os.path.isdir(_CURRENT_SESSION) else None
-            if not session:
+            entries = []
+            for path in _CURRENT_GCODE_PATHS:
+                if not os.path.isfile(path):
+                    continue
+                name = os.path.basename(path)
+                match = re.search(r"\.(\d+)\.gcode$", name, re.I)
+                index = int(match.group(1)) if match else None
+                entries.append((index, name, path))
+            entries.sort(key=lambda item: (item[0] is None, item[0], item[1]))
+            if not entries:
                 note = "Lamina la pieza para localizar su G-code; después pulsa Refrescar."
-                _set_no_data(note)
-                return {"note": note}
-
-            folder = os.path.join(session, "Metadata")
-            files = _gcode_files(folder)
-            if not files:
-                note = "La carpeta de G-code no contiene placas válidas."
                 _set_no_data(note)
                 return {"note": note}
 
@@ -836,22 +854,16 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
             if live and live.get("count"):
                 allowed = set(live.get("indices") or [])
                 filtered = [
-                    item for item in files
+                    item for item in entries
                     if item[0] is None or item[0] in allowed
                 ]
                 if filtered:
-                    files = filtered
-                elif len(files) > live["count"]:
-                    def _mtime(item):
-                        try:
-                            return os.path.getmtime(os.path.join(folder, item[1]))
-                        except OSError:
-                            return 0
-                    files = sorted(files, key=_mtime, reverse=True)[: live["count"]]
+                    entries = filtered
+                elif len(entries) > live["count"]:
+                    entries = entries[: live["count"]]
 
             plates = []
-            for index, name in files:
-                path = os.path.join(folder, name)
+            for index, name, path in entries:
                 try:
                     seconds, source, filament_mm, filament_g, cost = _metrics_for(path)
                 except Exception as exc:
@@ -953,17 +965,16 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 self.post_message({"type": "state", **self._scan()})
             elif event in (gcode_started, gcode_finished):
                 if not (error_code is not None and code == error_code):
-                    session = _session_from_gcode(getattr(ctx, "msg", "") or "")
-                    if session:
-                        _CURRENT_SESSION = session
-                        _clear_no_data()
-                        _forget_live_plates()
+                    _record_gcode_path(getattr(ctx, "msg", "") or "")
+                    _clear_no_data()
+                    _forget_live_plates()
             elif event == orca.LifecycleEvent.ProjectOpened:
                 _STALE = False
                 _LIVE_PLATE_NAMES.clear()
                 _forget_live_plates()
                 _clear_no_data()
                 _CURRENT_SESSION = None
+                _CURRENT_GCODE_PATHS.clear()
                 _CURRENT_PROJECT = getattr(ctx, "name", None)
                 self.post_message({"type": "state", **self._scan()})
             elif event in (orca.LifecycleEvent.NewProject, orca.LifecycleEvent.ProjectClosed):
@@ -972,6 +983,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 _forget_live_plates()
                 _clear_no_data()
                 _CURRENT_SESSION = None
+                _CURRENT_GCODE_PATHS.clear()
                 _CURRENT_PROJECT = None
                 self.post_message({
                     "type": "state",
@@ -980,6 +992,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 })
             elif event == orca.LifecycleEvent.SliceStarted:
                 _CURRENT_SESSION = None
+                _CURRENT_GCODE_PATHS.clear()
                 _clear_no_data()
                 self.post_message({
                     "type": "state",
