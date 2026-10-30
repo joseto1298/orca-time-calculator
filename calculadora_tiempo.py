@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.7.7"
+# version = "0.7.8"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -23,6 +23,7 @@ _CURRENT_PROJECT = None
 _LIVE_PLATE_NAMES = {}
 _LIVE_PLATES = None
 _LIVE_PLATES_AT = 0.0
+_LIVE_EXPORTING = False
 _STALE = False
 _STALE_NOTE = "Las placas cambiaron. Lamina de nuevo para actualizar los tiempos."
 _NAME_CACHE = {}
@@ -271,7 +272,9 @@ def _plate_data_from_3mf(path):
         return {}
     blocks = re.findall(r"<plate>(.*?)</plate>", config, re.S | re.I)
     if not blocks:
-        return {}
+        data = {"count": 0, "indices": [], "names": {}, "ordered": []}
+        _NAME_CACHE[key] = dict(data)
+        return data
     indices = []
     names = {}
     ordered = []
@@ -306,15 +309,18 @@ def _forget_live_plates():
 
 def _live_plates(force=False):
     """Exporta el proyecto vivo, con cambios sin guardar, y lee sus placas."""
-    global _LIVE_PLATES, _LIVE_PLATES_AT
+    global _LIVE_PLATES, _LIVE_PLATES_AT, _LIVE_EXPORTING
     now = time.time()
     if _LIVE_PLATES is not None:
         max_age = 2 if force else 60
         if now - _LIVE_PLATES_AT < max_age:
             return _LIVE_PLATES
+    if _LIVE_EXPORTING:
+        return _LIVE_PLATES
     host = getattr(orca, "host", None)
     if host is None or not hasattr(host, "plater"):
         return _LIVE_PLATES
+    _LIVE_EXPORTING = True
     folder = None
     temporary = False
     path = None
@@ -337,6 +343,7 @@ def _live_plates(force=False):
         print("[time-calc] no pude leer las placas vivas: %s" % exc)
         return _LIVE_PLATES
     finally:
+        _LIVE_EXPORTING = False
         if path:
             try:
                 os.remove(path)
@@ -766,6 +773,9 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
         try:
             if _STALE:
                 return {"note": _STALE_NOTE}
+            live = _live_plates(force=force_live)
+            if live is not None and live.get("count") == 0:
+                return {"note": "La placa está vacía. Añade una pieza y lamina."}
             session = _latest_session(_CURRENT_PROJECT)
             if not session:
                 if _CURRENT_PROJECT:
@@ -782,7 +792,6 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
             if not files:
                 return {"note": "La carpeta de G-code no contiene placas válidas."}
 
-            live = _live_plates(force=force_live)
             live_names = live.get("names", {}) if live else {}
             if live and live.get("count"):
                 allowed = set(live.get("indices") or [])
@@ -857,6 +866,8 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
 
     def on_lifecycle_event(self, event, ctx):
         global _CURRENT_PROJECT, _STALE
+        if _LIVE_EXPORTING:
+            return
         try:
             code = getattr(ctx, "code", None)
             msg = getattr(ctx, "msg", "") or ""
