@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.7.14"
+# version = "0.7.15"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -325,16 +325,6 @@ def _live_project_path():
         return str(path) if path else None
     except Exception:
         return None
-
-
-def _request_read_permissions():
-    try:
-        requester = getattr(orca, "request_permissions", None)
-        root = _temp_root()
-        if requester and root:
-            requester(fs_read=[os.path.join(root, "*")])
-    except Exception as exc:
-        print("[time-calc] permisos: %s" % exc)
 
 
 def _set_no_data(note):
@@ -831,13 +821,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 return {"note": _NO_DATA_NOTE}
             session = _CURRENT_SESSION if _CURRENT_SESSION and os.path.isdir(_CURRENT_SESSION) else None
             if not session:
-                project = _live_project_path() or _CURRENT_PROJECT
-                session = _latest_session(project)
-            if not session:
-                if _CURRENT_PROJECT:
-                    note = "No encontré G-code de este proyecto. Lamina la pieza y pulsa Refrescar."
-                else:
-                    note = "No encontré G-code en %TEMP%\\orcaslicer_model. Lamina la pieza y pulsa Refrescar."
+                note = "Lamina la pieza para localizar su G-code; después pulsa Refrescar."
                 _set_no_data(note)
                 return {"note": note}
 
@@ -1027,5 +1011,4 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
 @orca.plugin
 class TimeCalculatorPlugin(orca.base):
     def register_capabilities(self):
-        _request_read_permissions()
         orca.register_capability(TimeCalculatorPage)
