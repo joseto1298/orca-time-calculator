@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.8.3"
+# version = "0.8.4"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -70,6 +70,8 @@ _STRINGS = {
         "ui.plate_fallback": "Placa {n}",
         "ui.language": "Idioma",
         "ui.language_save_failed": "No se pudo guardar el idioma. Se mantiene el anterior.",
+        "ui.unsliced_one": "Falta 1 placa por laminar.",
+        "ui.unsliced_many": "Faltan {n} placas por laminar.",
         "note.updating": "Actualizando…",
         "note.empty_plate": "La placa está vacía. Añade una pieza y lamina.",
         "note.slice_first": "Lamina la pieza para localizar su G-code; después pulsa Refrescar.",
@@ -121,6 +123,8 @@ _STRINGS = {
         "ui.plate_fallback": "Plate {n}",
         "ui.language": "Language",
         "ui.language_save_failed": "Could not save the language. Keeping the previous one.",
+        "ui.unsliced_one": "1 plate still needs slicing.",
+        "ui.unsliced_many": "{n} plates still need slicing.",
         "note.updating": "Updating…",
         "note.empty_plate": "The plate is empty. Add a model and slice.",
         "note.slice_first": "Slice the model to locate its G-code, then press Refresh.",
@@ -1186,18 +1190,23 @@ PAGE = r"""<!DOCTYPE html>
       tick();
       return;
     }
+    var unsliced = state.unsliced_count || 0;
+    var unslicedText = unsliced === 1
+      ? t("ui.unsliced_one")
+      : t("ui.unsliced_many", { n: unsliced });
     if (state.duration_seconds !== null && state.duration_seconds !== undefined) {
       DURATION_SECONDS = state.duration_seconds;
       document.getElementById("dur").value = fmtDur(state.duration_seconds);
-      diag.className = "diag ok";
+      diag.className = unsliced ? "diag warn" : "diag ok";
       diag.textContent = t("ui.capture_ok", {
         source: state.source || t("ui.unknown")
-      });
+      }) + (unsliced ? " · " + unslicedText : "");
     } else {
       diag.className = "diag warn";
       diag.textContent = state.note
         ? String(state.note)
         : t("note.no_plate_time");
+      if (unsliced) diag.textContent += " · " + unslicedText;
     }
     document.getElementById("printFil").textContent =
       (state.filament_mm !== null && state.filament_mm !== undefined)
@@ -1319,30 +1328,28 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 index = int(match.group(1)) if match else None
                 entries.append((index, name, path))
             entries.sort(key=lambda item: (item[0] is None, item[0], item[1]))
-            if not entries:
-                note = _t("note.slice_first")
-                _set_no_data(note)
-                return {"note": note}
 
             live_names = live.get("names", {}) if live else {}
-            if live and live.get("count"):
-                allowed = set(live.get("indices") or [])
-                filtered = [
-                    item for item in entries
-                    if item[0] is None or item[0] in allowed
-                ]
-                if filtered:
-                    entries = filtered
-                elif len(entries) > live["count"]:
-                    entries = entries[: live["count"]]
+            by_index = {}
+            for item in entries:
+                if item[0] is not None and item[0] not in by_index:
+                    by_index[item[0]] = item
 
             plates = []
-            for index, name, path in entries:
-                try:
-                    seconds, source, filament_mm, filament_g, cost = _metrics_for(path)
-                except Exception as exc:
-                    print("[time-calc] error leyendo %s: %s" % (name, exc))
-                    continue
+            unsliced = 0
+
+            def add_plate(index, entry):
+                nonlocal unsliced
+                name = entry[1] if entry else ""
+                path = entry[2] if entry else None
+                seconds = source = filament_mm = filament_g = cost = None
+                if path:
+                    try:
+                        seconds, source, filament_mm, filament_g, cost = _metrics_for(path)
+                    except Exception as exc:
+                        print("[time-calc] error leyendo %s: %s" % (name, exc))
+                if not path:
+                    unsliced += 1
                 live_name = _LIVE_PLATE_NAMES.get(index) if index is not None else None
                 plates.append({
                     "index": index,
@@ -1354,6 +1361,20 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                     "cost": cost,
                     "source": source,
                 })
+
+            if live and live.get("count"):
+                targets = sorted(set(live.get("indices") or []))
+                if not targets:
+                    targets = list(range(live["count"]))
+                for index in targets:
+                    add_plate(index, by_index.get(index))
+            else:
+                if not entries:
+                    note = _t("note.slice_first")
+                    _set_no_data(note)
+                    return {"note": note}
+                for index, name, path in entries:
+                    add_plate(index, (index, name, path))
 
             if not plates:
                 note = _t("note.no_valid_plates")
@@ -1372,17 +1393,21 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 if plate["cost"] is not None:
                     total_cost = (total_cost or 0) + plate["cost"]
 
-            if len(plates) > 1:
+            sliced = [plate for plate in plates if plate["duration_seconds"] is not None]
+            if len(sliced) > 1:
                 source = _tn(
                     "source.sum_of_plates_one",
                     "source.sum_of_plates",
-                    len(plates),
+                    len(sliced),
                 )
+            elif sliced:
+                source = _source_label(sliced[0]["source"])
             else:
-                source = _source_label(plates[0]["source"])
+                source = _t("source.unknown")
             data = {
                 "plates": plates,
                 "plate_count": len(plates),
+                "unsliced_count": unsliced,
                 "duration_seconds": total_secs,
                 "filament_mm": total_mm,
                 "filament_g": total_g,
