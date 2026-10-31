@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.8.4"
+# version = "0.8.5"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -72,6 +72,8 @@ _STRINGS = {
         "ui.language_save_failed": "No se pudo guardar el idioma. Se mantiene el anterior.",
         "ui.unsliced_one": "Falta 1 placa por laminar.",
         "ui.unsliced_many": "Faltan {n} placas por laminar.",
+        "ui.not_sliced": "Sin laminar",
+        "ui.no_time": "Sin datos",
         "note.updating": "Actualizando…",
         "note.empty_plate": "La placa está vacía. Añade una pieza y lamina.",
         "note.slice_first": "Lamina la pieza para localizar su G-code; después pulsa Refrescar.",
@@ -125,6 +127,8 @@ _STRINGS = {
         "ui.language_save_failed": "Could not save the language. Keeping the previous one.",
         "ui.unsliced_one": "1 plate still needs slicing.",
         "ui.unsliced_many": "{n} plates still need slicing.",
+        "ui.not_sliced": "Not sliced",
+        "ui.no_time": "No data",
         "note.updating": "Updating…",
         "note.empty_plate": "The plate is empty. Add a model and slice.",
         "note.slice_first": "Slice the model to locate its G-code, then press Refresh.",
@@ -643,12 +647,19 @@ def _plate_data_from_3mf(path):
         return {}
     blocks = re.findall(r"<plate>(.*?)</plate>", config, re.S | re.I)
     if not blocks:
-        data = {"count": 0, "indices": [], "names": {}, "ordered": []}
+        data = {
+            "count": 0,
+            "indices": [],
+            "names": {},
+            "ordered": [],
+            "gcode_files": {},
+        }
         _NAME_CACHE[key] = dict(data)
         return data
     indices = []
     names = {}
     ordered = []
+    gcode_files = {}
     for ordinal, block in enumerate(blocks):
         meta = dict(re.findall(r'key="([^"]+)"\s+value="([^"]*)"', block, re.I))
         name = html.unescape(meta.get("plater_name", "")).strip()
@@ -662,11 +673,15 @@ def _plate_data_from_3mf(path):
         ordered.append(name)
         if name:
             names[index] = name
+        gcode_file = meta.get("gcode_file", "").strip()
+        if gcode_file:
+            gcode_files[index] = html.unescape(gcode_file)
     data = {
         "count": len(blocks),
         "indices": sorted(set(indices)),
         "names": names,
         "ordered": ordered,
+        "gcode_files": gcode_files,
     }
     _NAME_CACHE[key] = dict(data)
     return data
@@ -1116,6 +1131,9 @@ PAGE = r"""<!DOCTYPE html>
       if (p.cost !== null && p.cost !== undefined) meta.push(parseFloat(p.cost).toFixed(2));
       var displayName = p.name || t("ui.plate_fallback", { n: num });
       var title = esc(displayName);
+      var durationText = (p.duration_seconds !== null && p.duration_seconds !== undefined)
+        ? fmtDur(p.duration_seconds)
+        : t(p.sliced ? "ui.no_time" : "ui.not_sliced");
       html +=
         "<div class='plate-card'>" +
           "<div class='pc-head'><span class='pc-num'>" + num + "</span>" +
@@ -1124,9 +1142,7 @@ PAGE = r"""<!DOCTYPE html>
           "<div class='pc-finish'>--:--</div>" +
           "<div class='pc-date'></div>" +
           "<label class='pc-label' style='margin-top:8px;'>" + esc(t("ui.estimated_duration")) + "</label>" +
-          "<input class='pc-dur' readonly value='" +
-            (p.duration_seconds !== null && p.duration_seconds !== undefined ? fmtDur(p.duration_seconds) : "—") +
-          "'>" +
+          "<input class='pc-dur' readonly value='" + esc(durationText) + "'>" +
           (meta.length ? "<div class='pc-meta mono'>" + meta.join(" · ") + "</div>" : "") +
         "</div>";
     }
@@ -1143,7 +1159,9 @@ PAGE = r"""<!DOCTYPE html>
     for (var i = 0; i < PLATES.length; i++) {
       var d = PLATES[i].duration_seconds;
       if (d === null || d === undefined) {
-        if (finishes[i]) finishes[i].textContent = "—";
+        if (finishes[i]) finishes[i].textContent = t(
+          PLATES[i].sliced ? "ui.no_time" : "ui.not_sliced"
+        );
         if (dates[i]) dates[i].textContent = "";
         continue;
       }
@@ -1335,6 +1353,13 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 if item[0] is not None and item[0] not in by_index:
                     by_index[item[0]] = item
 
+            # The live 3MF knows the last G-code path for every sliced plate,
+            # even when Orca only emitted an export event for the active one.
+            live_gcode = live.get("gcode_files", {}) if live else {}
+            for index, path in live_gcode.items():
+                if isinstance(index, int) and path and os.path.isfile(path):
+                    by_index[index] = (index, os.path.basename(path), path)
+
             plates = []
             unsliced = 0
 
@@ -1355,6 +1380,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                     "index": index,
                     "name": live_name or live_names.get(index) or "",
                     "file": name,
+                    "sliced": bool(path),
                     "duration_seconds": seconds,
                     "filament_mm": filament_mm,
                     "filament_g": filament_g,
@@ -1366,6 +1392,29 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 targets = sorted(set(live.get("indices") or []))
                 if not targets:
                     targets = list(range(live["count"]))
+                base_path = next(
+                    (path for path in _CURRENT_GCODE_PATHS if os.path.isfile(path)),
+                    None,
+                )
+                if base_path:
+                    match = re.match(
+                        r"^\.(\d+)\.(\d+)\.gcode$",
+                        os.path.basename(base_path),
+                        re.I,
+                    )
+                    if match:
+                        pid = match.group(1)
+                        folder = os.path.dirname(base_path)
+                        for index in targets:
+                            if index in by_index:
+                                continue
+                            candidate = os.path.join(folder, ".%s.%d.gcode" % (pid, index))
+                            if os.path.isfile(candidate):
+                                by_index[index] = (
+                                    index,
+                                    os.path.basename(candidate),
+                                    candidate,
+                                )
                 for index in targets:
                     add_plate(index, by_index.get(index))
             else:
