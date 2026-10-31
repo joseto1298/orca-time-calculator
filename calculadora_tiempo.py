@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.8.14"
+# version = "0.8.15"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -469,8 +469,29 @@ def _remember_object_plates(live):
             )
 
 
+def _mapping_changes(live):
+    if not _OBJECT_PLATES_HISTORY:
+        return set()
+    current = live.get("object_plates") or {}
+    changed = set()
+    for object_id, indices in current.items():
+        previous = _OBJECT_PLATES_HISTORY.get(str(object_id))
+        if previous is None:
+            changed.update(indices)
+        elif set(previous) != set(indices):
+            changed.update(previous)
+            changed.update(indices)
+    for object_id, previous in _OBJECT_PLATES_HISTORY.items():
+        if str(object_id) not in current:
+            changed.update(previous)
+    return changed
+
+
 def _changed_plate_indices(ctx):
     live = _live_plates(force=True) or {}
+    changed = _mapping_changes(live)
+    if changed:
+        return changed
     object_plates = live.get("object_plates") or {}
     object_names = live.get("object_names") or {}
     found = set()
@@ -489,15 +510,12 @@ def _changed_plate_indices(ctx):
 
 
 def _shifted_plate_indices():
-    if not _OBJECT_PLATES_HISTORY:
-        return set()
     live = _live_plates(force=True) or {}
-    shifted = set()
-    for object_id, indices in (live.get("object_plates") or {}).items():
-        previous = _OBJECT_PLATES_HISTORY.get(str(object_id))
-        if previous is not None and set(indices) != set(previous):
-            shifted.update(indices)
-    return shifted
+    current = set(live.get("indices") or [])
+    if not current:
+        for indices in (live.get("object_plates") or {}).values():
+            current.update(indices)
+    return {index for index in _mapping_changes(live) if index in current}
 
 
 def _stale_note():
