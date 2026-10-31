@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.8.8"
+# version = "0.8.9"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -616,6 +616,16 @@ def _load_project_paths():
         _CURRENT_GCODE_PATHS.append(path)
         existing.add(index)
     _CURRENT_GCODE_PATHS.sort()
+
+
+def _forget_plate_path(index):
+    if index is None:
+        return
+    _CURRENT_GCODE_PATHS[:] = [
+        path for path in _CURRENT_GCODE_PATHS
+        if _gcode_index(path) != index
+    ]
+    _save_project_paths()
 
 
 def _save_project_paths():
@@ -1353,6 +1363,11 @@ PAGE = r"""<!DOCTYPE html>
         : t("note.no_plate_time");
       if (unsliced) diag.textContent += " · " + unslicedText;
     }
+    if (state.stale) {
+      diag.className = "diag warn";
+      var stale = state.stale_note || t("note.stale");
+      diag.textContent = diag.textContent ? diag.textContent + " · " + stale : stale;
+    }
     document.getElementById("printFil").textContent =
       (state.filament_mm !== null && state.filament_mm !== undefined)
         ? (Math.round(state.filament_mm) + " mm") : "—";
@@ -1398,6 +1413,14 @@ PAGE = r"""<!DOCTYPE html>
   var langSelect = document.getElementById("lang");
   if (langSelect) {
     langSelect.addEventListener("change", function () { setLanguage(langSelect.value); });
+  }
+  if (window.addEventListener) {
+    window.addEventListener("focus", function () { requestState(); });
+  }
+  if (document.addEventListener) {
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) requestState();
+    });
   }
 
   applyI18n();
@@ -1457,8 +1480,6 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
             return {"note": _t("note.updating")}
         _SCANNING = True
         try:
-            if _STALE:
-                return {"note": _stale_note()}
             live = _live_plates(force=force_live)
             if live is not None and live.get("count") == 0:
                 return {"note": _t("note.empty_plate")}
@@ -1604,6 +1625,8 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 "cost": total_cost,
                 "source": source,
                 "note": None if total_secs is not None else _t("note.no_plate_time"),
+                "stale": _STALE,
+                "stale_note": _stale_note() if _STALE else None,
                 "ran_at": time.time(),
             }
             print("[time-calc] scan %d placas -> %s s" % (len(plates), total_secs))
@@ -1696,24 +1719,27 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                     "reset": True,
                     "note": _t("note.slicing"),
                 })
-            elif event == plate_renamed and not _STALE:
+            elif event == plate_renamed:
                 index = getattr(ctx, "index", None)
                 name = (getattr(ctx, "name", "") or "").strip()
                 if isinstance(index, int) and name:
                     _LIVE_PLATE_NAMES[index] = name
                     self.post_message({"type": "state", **self._scan()})
-            elif event in (plate_created, plate_deleted) or event in object_events:
-                if _STALE:
-                    return
+            elif event in (plate_created, plate_deleted):
+                index = getattr(ctx, "index", None)
+                if isinstance(index, int):
+                    _LIVE_PLATE_NAMES.pop(index, None)
+                    _forget_plate_path(index)
+                _STALE = False
+                _forget_live_plates()
+                _clear_no_data()
+                self.post_message({"type": "state", **self._scan()})
+            elif event in object_events:
                 _STALE = True
                 _LIVE_PLATE_NAMES.clear()
                 _forget_live_plates()
                 _clear_no_data()
-                self.post_message({
-                    "type": "state",
-                    "reset": True,
-                    "note": _stale_note(),
-                })
+                self.post_message({"type": "state", **self._scan()})
         except Exception as exc:
             print("[time-calc] lifecycle %s: %s" % (event, exc))
 
