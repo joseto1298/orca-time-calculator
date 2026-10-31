@@ -22,8 +22,9 @@ Plugin que muestra la **hora actual** y, a partir de la estimación del laminado
 
 1. Abre OrcaSlicer.
 2. Ve a **Plugins → Install local plugin**.
-3. Selecciona `calculadora_tiempo.py` o el wheel `dist/hora_de_finalizacion-0.8.5-py3-none-any.whl`.
-4. Acepta el permiso de lectura del `.gcode` concreto que exporta OrcaSlicer. El plugin no recorre `%TEMP%` ni lista carpetas. El icono de la pestaña va incrustado en el `.py`; no hace falta copiar imágenes junto al plugin.
+3. **Desactiva o elimina la versión anterior** antes de instalar otra; OrcaSlicer no la sustituye y dos copias activas provocan una colisión de nombre.
+4. Selecciona `calculadora_tiempo.py` o el wheel `dist/hora_de_finalizacion-0.8.5-py3-none-any.whl`.
+5. Acepta el permiso de lectura del `.gcode` concreto que exporta OrcaSlicer. El plugin no recorre `%TEMP%` ni lista carpetas. El icono de la pestaña va incrustado en el `.py`; no hace falta copiar imágenes junto al plugin.
 
 ## Uso
 
