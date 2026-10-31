@@ -22,7 +22,7 @@ Plugin que muestra la **hora actual** y, a partir de la estimación del laminado
 
 1. Abre OrcaSlicer.
 2. Ve a **Plugins → Install local plugin**.
-3. Selecciona `calculadora_tiempo.py` o el wheel `dist/hora_de_finalizacion-0.8.1-py3-none-any.whl`.
+3. Selecciona `calculadora_tiempo.py` o el wheel `dist/hora_de_finalizacion-0.8.2-py3-none-any.whl`.
 4. Acepta el permiso de lectura del `.gcode` concreto que exporta OrcaSlicer. El plugin no recorre `%TEMP%` ni lista carpetas. El icono de la pestaña va incrustado en el `.py`; no hace falta copiar imágenes junto al plugin.
 
 ## Uso
@@ -43,7 +43,8 @@ La pestaña se actualiza sola al empezar y terminar un laminado, y cada segundo 
 - La pestaña incluye un selector **Español / English**.
 - La preferencia es global del plugin y se guarda en:
   `%APPDATA%\OrcaSlicer\orca_plugins\plugin_data\calculadora_tiempo\settings.json`
-- Se mantiene entre proyectos y reinicios de OrcaSlicer.
+- Se mantiene entre proyectos, reinicios y actualizaciones del wheel.
+- La ruta es estable e independiente de la versión instalada. Si existe un `settings.json` antiguo en la carpeta de la versión, se migra automáticamente.
 - Si no existe el fichero o el idioma no es válido, se usa español.
 - El contenido de la pestaña cambia al momento. El nombre de la pestaña puede necesitar reiniciar Orca para actualizarse.
 
@@ -82,7 +83,7 @@ Al modificar el plugin, **sube la versión** en el encabezado PEP 723 (`# versio
 ## Archivos
 
 - `calculadora_tiempo.py` — plugin completo (metadatos, captura del G-code y pestaña de UI).
-- `dist/hora_de_finalizacion-0.8.1-py3-none-any.whl` — paquete instalable con el plugin y el icono.
+- `dist/hora_de_finalizacion-0.8.2-py3-none-any.whl` — paquete instalable con el plugin y el icono.
 - `build_wheel.py` — genera el wheel a partir del `.py` y `3.png`.
 - `Captura de pantalla.png` — captura de la pestaña Tiempo usada en este README.
 - `AGENTS.md` — notas para asistentes/agentes que trabajen en el repositorio.

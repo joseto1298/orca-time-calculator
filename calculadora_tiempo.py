@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.8.1"
+# version = "0.8.2"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -154,27 +154,111 @@ def _plugin_storage():
     return folder
 
 
-def _read_settings():
+def _settings_candidates():
+    paths = []
     try:
-        path = os.path.join(_plugin_storage(), _SETTINGS_FILE)
+        current = os.path.normpath(str(orca.host.plugin.storage()))
+    except Exception:
+        current = None
+    if current:
+        parent = os.path.dirname(current)
+        if os.path.basename(parent).lower() == "plugin_data":
+            paths.append(os.path.join(parent, "calculadora_tiempo"))
+        paths.append(current)
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        paths.append(os.path.join(
+            appdata, "OrcaSlicer", "orca_plugins", "plugin_data", "calculadora_tiempo"
+        ))
+    home = os.path.expanduser("~")
+    paths.append(os.path.join(
+        home, ".config", "OrcaSlicer", "orca_plugins", "plugin_data", "calculadora_tiempo"
+    ))
+    paths.append(os.path.join(
+        home, "Library", "Application Support", "OrcaSlicer",
+        "orca_plugins", "plugin_data", "calculadora_tiempo"
+    ))
+    unique = []
+    for path in paths:
+        if path and path not in unique:
+            unique.append(path)
+    return unique
+
+
+def _host_storage_available():
+    try:
+        str(orca.host.plugin.storage())
+        return True
+    except Exception:
+        return False
+
+
+def _legacy_settings_files():
+    bases = []
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        bases.append(os.path.join(
+            appdata, "OrcaSlicer", "orca_plugins", "plugin_data"
+        ))
+    home = os.path.expanduser("~")
+    bases.append(os.path.join(
+        home, ".config", "OrcaSlicer", "orca_plugins", "plugin_data"
+    ))
+    bases.append(os.path.join(
+        home, "Library", "Application Support", "OrcaSlicer",
+        "orca_plugins", "plugin_data"
+    ))
+    found = []
+    for base in bases:
+        try:
+            names = os.listdir(base)
+        except OSError:
+            continue
+        for name in names:
+            lowered = name.lower()
+            if not (
+                lowered == "calculadora_tiempo"
+                or lowered.startswith("hora_de_finalizacion-")
+            ):
+                continue
+            path = os.path.join(base, name, _SETTINGS_FILE)
+            if os.path.isfile(path) and path not in found:
+                found.append(path)
+    def _mtime(path):
+        try:
+            return os.path.getmtime(path)
+        except OSError:
+            return 0
+
+    found.sort(key=_mtime, reverse=True)
+    return found
+
+
+def _settings_file(create=False):
+    for folder in _settings_candidates():
+        try:
+            if create:
+                os.makedirs(folder, exist_ok=True)
+            elif not os.path.isdir(folder):
+                continue
+            return os.path.join(folder, _SETTINGS_FILE)
+        except OSError:
+            continue
+    return None
+
+
+def _read_settings_file(path):
+    try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
+        return data if isinstance(data, dict) else None
     except Exception:
-        return {}
+        return None
 
 
-def _current_language():
-    global _LANGUAGE
-    if _LANGUAGE in _SUPPORTED_LANGUAGES:
-        return _LANGUAGE
-    saved = _read_settings().get("language")
-    _LANGUAGE = saved if saved in _SUPPORTED_LANGUAGES else _DEFAULT_LANGUAGE
-    return _LANGUAGE
-
-
-def _write_language(lang):
-    path = os.path.join(_plugin_storage(), _SETTINGS_FILE)
+def _write_settings(path, lang):
+    if not path:
+        return False
     tmp = path + ".tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as f:
@@ -189,6 +273,45 @@ def _write_language(lang):
         except OSError:
             pass
         return False
+
+
+def _saved_language():
+    files = [
+        os.path.join(folder, _SETTINGS_FILE)
+        for folder in _settings_candidates()
+    ]
+    for path in _legacy_settings_files():
+        if path not in files:
+            files.append(path)
+    for path in files:
+        data = _read_settings_file(path)
+        if not data:
+            continue
+        lang = data.get("language")
+        if lang not in _SUPPORTED_LANGUAGES:
+            continue
+        target = _settings_file(create=True)
+        if target and os.path.normcase(target) != os.path.normcase(path):
+            _write_settings(target, lang)
+        return lang
+    return None
+
+
+def _current_language():
+    global _LANGUAGE
+    if _LANGUAGE in _SUPPORTED_LANGUAGES:
+        return _LANGUAGE
+    saved = _saved_language()
+    if saved in _SUPPORTED_LANGUAGES:
+        _LANGUAGE = saved
+        return _LANGUAGE
+    if _host_storage_available():
+        _LANGUAGE = _DEFAULT_LANGUAGE
+    return _DEFAULT_LANGUAGE
+
+
+def _write_language(lang):
+    return _write_settings(_settings_file(create=True), lang)
 
 
 def _set_language(lang):
