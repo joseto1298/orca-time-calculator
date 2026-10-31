@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.8.11"
+# version = "0.8.12"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -33,6 +33,10 @@ _LIVE_PLATES = None
 _LIVE_PLATES_AT = 0.0
 _LIVE_EXPORTING = False
 _STALE = False
+_STALE_PLATES = set()
+_STALE_ALL = False
+_OBJECT_PLATES_HISTORY = {}
+_OBJECT_NAMES_HISTORY = {}
 _NAME_CACHE = {}
 _TAIL_CACHE = {}
 _SCANNING = False
@@ -76,6 +80,8 @@ _STRINGS = {
         "ui.unsliced_many": "Faltan {n} placas por laminar.",
         "ui.not_sliced": "Sin laminar",
         "ui.no_time": "Sin datos",
+        "ui.changed": "Cambió",
+        "ui.slice_again": "Lamina de nuevo",
         "note.updating": "Actualizando…",
         "note.empty_plate": "La placa está vacía. Añade una pieza y lamina.",
         "note.slice_first": "Lamina la pieza para localizar su G-code; después pulsa Refrescar.",
@@ -88,6 +94,7 @@ _STRINGS = {
         "note.open_project": "Abre o lamina un proyecto para ver la estimación.",
         "note.slicing": "Laminando…",
         "note.stale": "Las placas cambiaron. Lamina de nuevo para actualizar los tiempos.",
+        "note.stale_plate": "La placa {n} cambió. Lamínala de nuevo para actualizar el tiempo.",
         "source.total_estimated": "tiempo total estimado",
         "source.estimated_normal": "tiempo estimado (modo normal)",
         "source.model_printing": "tiempo de impresión del modelo",
@@ -131,6 +138,8 @@ _STRINGS = {
         "ui.unsliced_many": "{n} plates still need slicing.",
         "ui.not_sliced": "Not sliced",
         "ui.no_time": "No data",
+        "ui.changed": "Changed",
+        "ui.slice_again": "Slice again",
         "note.updating": "Updating…",
         "note.empty_plate": "The plate is empty. Add a model and slice.",
         "note.slice_first": "Slice the model to locate its G-code, then press Refresh.",
@@ -143,6 +152,7 @@ _STRINGS = {
         "note.open_project": "Open or slice a project to see the estimate.",
         "note.slicing": "Slicing…",
         "note.stale": "Plates changed. Slice again to update the times.",
+        "note.stale_plate": "Plate {n} changed. Slice it again to update the time.",
         "source.total_estimated": "total estimated time",
         "source.estimated_normal": "estimated printing time (normal)",
         "source.model_printing": "model printing time",
@@ -420,7 +430,65 @@ def _source_label(key):
     return label if label != "source." + key else key
 
 
+def _mark_stale(indices=None):
+    global _STALE, _STALE_ALL
+    if indices is None or not indices:
+        _STALE_ALL = True
+    else:
+        _STALE_PLATES.update(indices)
+    _STALE = True
+
+
+def _clear_stale(index=None):
+    global _STALE, _STALE_ALL
+    if index is None:
+        _STALE_PLATES.clear()
+        _STALE_ALL = False
+    else:
+        _STALE_PLATES.discard(index)
+    _STALE = bool(_STALE_PLATES or _STALE_ALL)
+
+
+def _plate_is_stale(index):
+    if index is None:
+        return _STALE_ALL
+    return _STALE_ALL or index in _STALE_PLATES
+
+
+def _remember_object_plates(live):
+    if not live:
+        return
+    for object_id, indices in (live.get("object_plates") or {}).items():
+        _OBJECT_PLATES_HISTORY[str(object_id)] = set(indices)
+    for object_id, name in (live.get("object_names") or {}).items():
+        if name:
+            _OBJECT_NAMES_HISTORY[name] = set(
+                (live.get("object_plates") or {}).get(str(object_id), ())
+            )
+
+
+def _changed_plate_indices(ctx):
+    live = _live_plates(force=True) or {}
+    object_plates = live.get("object_plates") or {}
+    object_names = live.get("object_names") or {}
+    found = set()
+    object_id = getattr(ctx, "id", None)
+    if object_id not in (None, "", -1):
+        object_id = str(object_id)
+        found.update(object_plates.get(object_id, ()))
+        found.update(_OBJECT_PLATES_HISTORY.get(object_id, ()))
+    name = (getattr(ctx, "name", "") or "").strip()
+    if name:
+        for candidate, object_name in object_names.items():
+            if object_name == name:
+                found.update(object_plates.get(str(candidate), ()))
+        found.update(_OBJECT_NAMES_HISTORY.get(name, ()))
+    return found
+
+
 def _stale_note():
+    if not _STALE_ALL and len(_STALE_PLATES) == 1:
+        return _t("note.stale_plate", n=next(iter(_STALE_PLATES)) + 1)
     return _t("note.stale")
 
 
@@ -775,6 +843,8 @@ def _plate_data_from_3mf(path):
             "names": {},
             "ordered": [],
             "gcode_files": {},
+            "object_plates": {},
+            "object_names": {},
         }
         _NAME_CACHE[key] = dict(data)
         return data
@@ -782,6 +852,8 @@ def _plate_data_from_3mf(path):
     names = {}
     ordered = []
     gcode_files = {}
+    object_plates = {}
+    object_names = {}
     for ordinal, block in enumerate(blocks):
         meta = dict(re.findall(r'key="([^"]+)"\s+value="([^"]*)"', block, re.I))
         name = html.unescape(meta.get("plater_name", "")).strip()
@@ -798,12 +870,27 @@ def _plate_data_from_3mf(path):
         gcode_file = meta.get("gcode_file", "").strip()
         if gcode_file:
             gcode_files[index] = html.unescape(gcode_file)
+        for instance in re.findall(r"<model_instance>(.*?)</model_instance>", block, re.S | re.I):
+            instance_meta = dict(re.findall(r'key="([^"]+)"\s+value="([^"]*)"', instance, re.I))
+            object_id = instance_meta.get("object_id", "").strip()
+            if object_id:
+                object_plates.setdefault(object_id, set()).add(index)
+    for object_block in re.findall(r"<object\b([^>]*)>(.*?)</object>", config, re.S | re.I):
+        attrs, body = object_block
+        match = re.search(r'\bid="([^"]+)"', attrs, re.I)
+        if not match:
+            continue
+        name_match = re.search(r'<metadata key="name" value="([^"]*)"', body, re.I)
+        if name_match:
+            object_names[match.group(1)] = html.unescape(name_match.group(1))
     data = {
         "count": len(blocks),
         "indices": sorted(set(indices)),
         "names": names,
         "ordered": ordered,
         "gcode_files": gcode_files,
+        "object_plates": {key: sorted(value) for key, value in object_plates.items()},
+        "object_names": object_names,
     }
     _NAME_CACHE[key] = dict(data)
     return data
@@ -1011,6 +1098,8 @@ PAGE = r"""<!DOCTYPE html>
   .pc-num { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
     border-radius: 50%; background: var(--accent); color: #1b1d20; font-weight: 700; font-size: 12px; }
   .pc-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pc-stale { margin-left: auto; padding: 2px 7px; border-radius: 999px; background: var(--warn);
+    color: #1b1d20; font-size: 10px; font-weight: 700; text-transform: uppercase; white-space: nowrap; }
   .pc-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
   .pc-finish { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .pc-date { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
@@ -1253,13 +1342,19 @@ PAGE = r"""<!DOCTYPE html>
       if (p.cost !== null && p.cost !== undefined) meta.push(parseFloat(p.cost).toFixed(2));
       var displayName = p.name || t("ui.plate_fallback", { n: num });
       var title = esc(displayName);
-      var durationText = (p.duration_seconds !== null && p.duration_seconds !== undefined)
-        ? fmtDur(p.duration_seconds)
-        : t(p.sliced ? "ui.no_time" : "ui.not_sliced");
+      var durationText = p.stale
+        ? t("ui.slice_again")
+        : (p.duration_seconds !== null && p.duration_seconds !== undefined)
+          ? fmtDur(p.duration_seconds)
+          : t(p.sliced ? "ui.no_time" : "ui.not_sliced");
+      var staleBadge = p.stale
+        ? "<span class='pc-stale'>" + esc(t("ui.changed")) + "</span>"
+        : "";
       html +=
         "<div class='plate-card'>" +
           "<div class='pc-head'><span class='pc-num'>" + num + "</span>" +
-            "<span class='pc-name' title='" + title + "'>" + title + "</span></div>" +
+            "<span class='pc-name' title='" + title + "'>" + title + "</span>" +
+            staleBadge + "</div>" +
           "<div class='pc-label' style='margin-top:2px;'>" + esc(t("ui.plate_finish")) + "</div>" +
           "<div class='pc-finish'>--:--</div>" +
           "<div class='pc-date'></div>" +
@@ -1279,6 +1374,11 @@ PAGE = r"""<!DOCTYPE html>
     var dates = document.querySelectorAll(".pc-date");
     var cumulative = 0;
     for (var i = 0; i < PLATES.length; i++) {
+      if (PLATES[i].stale) {
+        if (finishes[i]) finishes[i].textContent = t("ui.slice_again");
+        if (dates[i]) dates[i].textContent = "";
+        continue;
+      }
       var d = PLATES[i].duration_seconds;
       if (d === null || d === undefined) {
         if (finishes[i]) finishes[i].textContent = t(
@@ -1469,6 +1569,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
         _SCANNING = True
         try:
             live = _live_plates(force=force_live)
+            _remember_object_plates(live)
             if live is not None and live.get("count") == 0:
                 return {"note": _t("note.empty_plate")}
             if not force_live and _NO_DATA_NOTE and time.time() - _NO_DATA_AT < _NO_DATA_TTL:
@@ -1520,6 +1621,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                     "filament_g": filament_g,
                     "cost": cost,
                     "source": source,
+                    "stale": bool(path) and _plate_is_stale(index),
                 })
 
             if live and live.get("count"):
@@ -1569,7 +1671,11 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
             _clear_no_data()
 
             total_secs = total_mm = total_g = total_cost = None
+            stale_count = 0
             for plate in plates:
+                if plate["stale"]:
+                    stale_count += 1
+                    continue
                 if plate["duration_seconds"] is not None:
                     total_secs = (total_secs or 0) + plate["duration_seconds"]
                 if plate["filament_mm"] is not None:
@@ -1579,7 +1685,10 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 if plate["cost"] is not None:
                     total_cost = (total_cost or 0) + plate["cost"]
 
-            sliced = [plate for plate in plates if plate["duration_seconds"] is not None]
+            sliced = [
+                plate for plate in plates
+                if plate["duration_seconds"] is not None and not plate["stale"]
+            ]
             if len(sliced) > 1:
                 source = _tn(
                     "source.sum_of_plates_one",
@@ -1594,6 +1703,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 "plates": plates,
                 "plate_count": len(plates),
                 "unsliced_count": unsliced,
+                "stale_count": stale_count,
                 "duration_seconds": total_secs,
                 "filament_mm": total_mm,
                 "filament_g": total_g,
@@ -1633,9 +1743,16 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                     getattr(life, "ObjectDeleted", None),
                     getattr(life, "ObjectTransformed", None),
                     getattr(life, "ObjectChanged", None),
-                    getattr(life, "ObjectRenamed", None),
+                     getattr(life, "ObjectRenamed", None),
+                 ) if value is not None
+             )
+            preset_events = tuple(
+                value for value in (
+                    getattr(life, "PresetSelected", None),
+                    getattr(life, "PresetSaved", None),
                 ) if value is not None
             )
+
 
             if event == orca.LifecycleEvent.SlicingJobComplete:
                 if error_code is not None and code == error_code:
@@ -1652,7 +1769,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                         "note": _t("note.slice_cancelled"),
                     })
                     return
-                _STALE = False
+                _clear_stale()
                 _forget_live_plates()
                 _clear_no_data()
                 self.post_message({"type": "state", **self._scan()})
@@ -1662,7 +1779,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                     _clear_no_data()
                     _forget_live_plates()
             elif event == orca.LifecycleEvent.ProjectOpened:
-                _STALE = False
+                _clear_stale()
                 _LIVE_PLATE_NAMES.clear()
                 _forget_live_plates()
                 _clear_no_data()
@@ -1674,7 +1791,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                     _CURRENT_SESSION = _session_from_gcode(_CURRENT_GCODE_PATHS[0])
                 self.post_message({"type": "state", **self._scan()})
             elif event in (orca.LifecycleEvent.NewProject, orca.LifecycleEvent.ProjectClosed):
-                _STALE = False
+                _clear_stale()
                 _LIVE_PLATE_NAMES.clear()
                 _forget_live_plates()
                 _clear_no_data()
@@ -1705,13 +1822,20 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 if isinstance(index, int):
                     _LIVE_PLATE_NAMES.pop(index, None)
                     _forget_plate_path(index)
-                _STALE = False
+                    _clear_stale(index)
+                else:
+                    _clear_stale()
                 _forget_live_plates()
                 _clear_no_data()
                 self.post_message({"type": "state", **self._scan()})
             elif event in object_events:
-                _STALE = True
+                changed = _changed_plate_indices(ctx)
+                _mark_stale(changed if changed else None)
                 _LIVE_PLATE_NAMES.clear()
+                _clear_no_data()
+                self.post_message({"type": "state", **self._scan()})
+            elif event in preset_events:
+                _mark_stale()
                 _forget_live_plates()
                 _clear_no_data()
                 self.post_message({"type": "state", **self._scan()})

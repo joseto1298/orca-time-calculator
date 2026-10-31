@@ -11,6 +11,7 @@ Plugin que muestra la **hora actual** y, a partir de la estimación del laminado
 - Duración total estimada en un campo de **solo lectura**.
 - Totales de **filamento (mm), peso (g) y coste**.
 - Un tablero tipo **kanban** con una tarjeta por **cada placa del proyecto**, esté laminada o no: número, nombre de la placa (el guardado en el proyecto; si no tiene, «Placa N»), hora/fecha de fin y duración. Las placas sin laminar aparecen con «—» y un aviso de cuántas faltan.
+- Si cambias un objeto o un preset, las placas afectadas se marcan con **Cambió** y se pide laminarlas de nuevo; cuando se puede identificar la placa por el objeto, solo se marcan las afectadas.
 - Dos modos con botón: **Secuencial** (las placas se imprimen una tras otra y el fin acumula las duraciones) e **Independiente** (cada placa empieza en la hora actual; el fin usa su propia duración y el héroe muestra la placa más larga).
 
 ## Requisitos
@@ -23,7 +24,7 @@ Plugin que muestra la **hora actual** y, a partir de la estimación del laminado
 1. Abre OrcaSlicer.
 2. Ve a **Plugins → Install local plugin**.
 3. **Desactiva o elimina la versión anterior** antes de instalar otra; OrcaSlicer no la sustituye y dos copias activas provocan una colisión de nombre.
-4. Selecciona `calculadora_tiempo.py` o el wheel `dist/hora_de_finalizacion-0.8.11-py3-none-any.whl`.
+4. Selecciona `calculadora_tiempo.py` o el wheel `dist/hora_de_finalizacion-0.8.12-py3-none-any.whl`.
 5. Acepta el permiso de lectura de los `.gcode` concretos que exporta OrcaSlicer. El plugin lo solicita al detectar cada laminado; tras instalar una versión nueva hay que volver a aceptarlo. No recorre `%TEMP%` ni lista carpetas. El icono de la pestaña va incrustado en el `.py`; no hace falta copiar imágenes junto al plugin.
 
 ## Uso
@@ -32,7 +33,7 @@ Plugin que muestra la **hora actual** y, a partir de la estimación del laminado
 2. Abre la pestaña **Tiempo**.
 3. Pulsa **Refrescar** si acabas de laminar: fuerza una consulta del proyecto actual y de sus rutas de G-code, en orden de placa. Al volver a la pestaña se reutiliza la caché para que sea instantáneo.
 4. Alterna **Secuencial** / **Independiente** en el héroe para ver los fines acumulados o por placa.
-5. Añadir o borrar una placa se refleja al momento: la nueva aparece como “Sin laminar” y la borrada desaparece. Si mueves o cambias objetos, se mantienen las tarjetas pero se avisa de que los tiempos son del último laminado.
+5. Añadir o borrar una placa se refleja al momento: la nueva aparece como “Sin laminar” y la borrada desaparece. Si mueves o cambias objetos, las placas afectadas se marcan como **Cambió** y se pide laminarlas de nuevo.
 6. La pestaña lee las placas actuales del proyecto, aunque no hayas guardado, para no mostrar G-code antiguo de placas borradas.
 7. Recuerda el último G-code de cada placa aunque lamines en varias tandas o reinicies Orca; si el fichero temporal ya no existe, esa placa vuelve a aparecer como “Sin laminar”.
 8. Si la placa está vacía, muestra un aviso y no recorre `%TEMP%` ni vuelve a pedir permisos.
@@ -66,7 +67,7 @@ Formatos de tiempo reconocidos: `; total estimated time:`, `; model printing tim
 
 ## Limitaciones
 
-- Solo se consideran las placas presentes en la **última sesión de laminado**. Si laminas placa por placa en sesiones separadas, verás únicamente la última.
+- Se consideran las placas del **proyecto actual** y sus rutas de G-code guardadas; si una placa se laminó en otra sesión, se conserva su ruta mientras el proyecto la recuerde.
 - Requiere haber laminado al menos una vez: sin G-code en la caché, la pestaña muestra "sin datos de laminado".
 - La primera lectura de cada `.gcode` exacto puede abrir un diálogo de permisos de OrcaSlicer; es normal. El plugin no recorre `%TEMP%` ni solicita permiso para la carpeta completa.
 
@@ -86,7 +87,7 @@ Al modificar el plugin, **sube la versión** en el encabezado PEP 723 (`# versio
 ## Archivos
 
 - `calculadora_tiempo.py` — plugin completo (metadatos, captura del G-code y pestaña de UI).
-- `dist/hora_de_finalizacion-0.8.11-py3-none-any.whl` — paquete instalable con el plugin y el icono.
+- `dist/hora_de_finalizacion-0.8.12-py3-none-any.whl` — paquete instalable con el plugin y el icono.
 - `build_wheel.py` — genera el wheel a partir del `.py` y `3.png`.
 - `Captura de pantalla.png` — captura de la pestaña Tiempo usada en este README.
 - `AGENTS.md` — notas para asistentes/agentes que trabajen en el repositorio.
