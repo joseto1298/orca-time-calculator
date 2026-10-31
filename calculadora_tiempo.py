@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.8.7"
+# version = "0.8.8"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -742,6 +742,21 @@ def _latest_session(project=None):
     return None
 
 
+def _session_gcode_paths(session):
+    if not session:
+        return {}
+    metadata = os.path.join(session, "Metadata")
+    paths = {}
+    for index, name in _gcode_files(metadata):
+        if index is not None:
+            paths[index] = os.path.join(metadata, name)
+    return paths
+
+
+def _latest_project_gcode():
+    return _session_gcode_paths(_latest_session(_CURRENT_PROJECT))
+
+
 def _plate_data_from_3mf(path):
     """Placas reales del 3MF: {count, indices, names, ordered}."""
     try:
@@ -1447,7 +1462,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
             live = _live_plates(force=force_live)
             if live is not None and live.get("count") == 0:
                 return {"note": _t("note.empty_plate")}
-            if _NO_DATA_NOTE and time.time() - _NO_DATA_AT < _NO_DATA_TTL:
+            if not force_live and _NO_DATA_NOTE and time.time() - _NO_DATA_AT < _NO_DATA_TTL:
                 return {"note": _NO_DATA_NOTE}
             entries = []
             for path in _CURRENT_GCODE_PATHS:
@@ -1502,7 +1517,20 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 targets = sorted(set(live.get("indices") or []))
                 if not targets:
                     targets = list(range(live["count"]))
-                base_path = _CURRENT_GCODE_PATHS[-1] if _CURRENT_GCODE_PATHS else None
+                latest_paths = {}
+                if force_live:
+                    latest_paths = _latest_project_gcode()
+                    for index, path in latest_paths.items():
+                        if index in targets:
+                            by_index[index] = (
+                                index,
+                                os.path.basename(path),
+                                path,
+                            )
+                if latest_paths:
+                    base_path = next(iter(latest_paths.values()))
+                else:
+                    base_path = _CURRENT_GCODE_PATHS[-1] if _CURRENT_GCODE_PATHS else None
                 if base_path:
                     match = re.match(
                         r"^\.(\d+)\.(\d+)\.gcode$",
