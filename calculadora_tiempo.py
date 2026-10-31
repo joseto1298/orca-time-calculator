@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.8.9"
+# version = "0.8.10"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -764,6 +764,10 @@ def _session_gcode_paths(session):
 
 
 def _latest_project_gcode():
+    if _CURRENT_SESSION:
+        current = _session_gcode_paths(_CURRENT_SESSION)
+        if current:
+            return current
     return _session_gcode_paths(_latest_session(_CURRENT_PROJECT))
 
 
@@ -1393,9 +1397,11 @@ PAGE = r"""<!DOCTYPE html>
     }
   }
 
-  function requestState() {
+  function requestState(force) {
     setLoading(true);
-    if (bridge && bridge.postMessage) bridge.postMessage({ type: "get_state" });
+    if (bridge && bridge.postMessage) {
+      bridge.postMessage({ type: "get_state", force: force !== false });
+    }
   }
 
   if (bridge && bridge.onMessage) {
@@ -1406,7 +1412,7 @@ PAGE = r"""<!DOCTYPE html>
 
   document.getElementById("refreshBtn").addEventListener("click", function () {
     tick();
-    requestState();
+    requestState(true);
   });
   document.getElementById("modeSeq").addEventListener("click", function () { setMode("seq"); });
   document.getElementById("modeInd").addEventListener("click", function () { setMode("ind"); });
@@ -1415,11 +1421,11 @@ PAGE = r"""<!DOCTYPE html>
     langSelect.addEventListener("change", function () { setLanguage(langSelect.value); });
   }
   if (window.addEventListener) {
-    window.addEventListener("focus", function () { requestState(); });
+    window.addEventListener("focus", function () { requestState(false); });
   }
   if (document.addEventListener) {
     document.addEventListener("visibilitychange", function () {
-      if (!document.hidden) requestState();
+      if (!document.hidden) requestState(false);
     });
   }
 
@@ -1457,10 +1463,11 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
             return
         kind = data.get("type")
         if kind == "get_state":
+            force = data.get("force", True) is not False
             self.post_message({
                 "type": "state",
                 "language": _current_language(),
-                **self._scan(force_live=True),
+                **self._scan(force_live=force),
             })
         elif kind == "set_language":
             lang = data.get("language")
@@ -1540,14 +1547,16 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                     targets = list(range(live["count"]))
                 latest_paths = {}
                 if force_live:
-                    latest_paths = _latest_project_gcode()
-                    for index, path in latest_paths.items():
-                        if index in targets:
-                            by_index[index] = (
-                                index,
-                                os.path.basename(path),
-                                path,
-                            )
+                    missing = [index for index in targets if index not in by_index]
+                    if missing:
+                        latest_paths = _latest_project_gcode()
+                        for index, path in latest_paths.items():
+                            if index in missing:
+                                by_index[index] = (
+                                    index,
+                                    os.path.basename(path),
+                                    path,
+                                )
                 if latest_paths:
                     base_path = next(iter(latest_paths.values()))
                 else:
