@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.8.15"
+# version = "0.8.16"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -94,6 +94,7 @@ _STRINGS = {
         "note.slice_cancelled": "Laminado cancelado.",
         "note.open_project": "Abre o lamina un proyecto para ver la estimación.",
         "note.slicing": "Laminando…",
+        "note.refresh_plate": "Placa actualizada. Pulsa Refrescar.",
         "note.stale": "Las placas cambiaron. Lamina de nuevo para actualizar los tiempos.",
         "note.stale_plate": "La placa {n} cambió. Lamínala de nuevo para actualizar el tiempo.",
         "source.total_estimated": "tiempo total estimado",
@@ -153,6 +154,7 @@ _STRINGS = {
         "note.slice_cancelled": "Slicing cancelled.",
         "note.open_project": "Open or slice a project to see the estimate.",
         "note.slicing": "Slicing…",
+        "note.refresh_plate": "Plate updated. Press Refresh.",
         "note.stale": "Plates changed. Slice again to update the times.",
         "note.stale_plate": "Plate {n} changed. Slice it again to update the time.",
         "source.total_estimated": "total estimated time",
@@ -487,8 +489,8 @@ def _mapping_changes(live):
     return changed
 
 
-def _changed_plate_indices(ctx):
-    live = _live_plates(force=True) or {}
+def _changed_plate_indices(ctx, force=True):
+    live = _live_plates(force=force) or {}
     changed = _mapping_changes(live)
     if changed:
         return changed
@@ -509,13 +511,57 @@ def _changed_plate_indices(ctx):
     return found
 
 
-def _shifted_plate_indices():
-    live = _live_plates(force=True) or {}
-    current = set(live.get("indices") or [])
-    if not current:
-        for indices in (live.get("object_plates") or {}).values():
-            current.update(indices)
-    return {index for index in _mapping_changes(live) if index in current}
+def _shifted_plate_indices(kind, at):
+    if not isinstance(at, int):
+        return set()
+    indices = (_LIVE_PLATES or {}).get("indices") or []
+    if kind == "delete":
+        return {index - 1 for index in indices if index > at}
+    return {index + 1 for index in indices if index >= at}
+
+
+def _adjust_live_plate_cache(kind, at, name=""):
+    global _LIVE_PLATES_AT
+    live = _LIVE_PLATES
+    if not isinstance(live, dict) or not isinstance(at, int):
+        return False
+    if kind == "delete":
+        def remap(index):
+            return index - 1 if index > at else index
+        skip = lambda index: index == at
+    else:
+        def remap(index):
+            return index + 1 if index >= at else index
+        skip = lambda index: False
+    live["indices"] = sorted(
+        {remap(index) for index in (live.get("indices") or []) if not skip(index)}
+        | ({at} if kind == "create" else set())
+    )
+    live["count"] = len(live["indices"])
+    names = {}
+    for index, value in (live.get("names") or {}).items():
+        if not skip(index):
+            names[remap(index)] = value
+    if kind == "create" and name:
+        names[at] = name
+    live["names"] = names
+    live["gcode_files"] = {
+        remap(index): path
+        for index, path in (live.get("gcode_files") or {}).items()
+        if not skip(index)
+    }
+    object_plates = {}
+    for object_id, indices in (live.get("object_plates") or {}).items():
+        mapped = sorted({remap(index) for index in indices if not skip(index)})
+        if mapped:
+            object_plates[object_id] = mapped
+    live["object_plates"] = object_plates
+    live["empty_indices"] = sorted(
+        {remap(index) for index in (live.get("empty_indices") or []) if not skip(index)}
+        | ({at} if kind == "create" else set())
+    )
+    _LIVE_PLATES_AT = time.time()
+    return True
 
 
 def _stale_note():
@@ -1871,20 +1917,37 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                     self.post_message({"type": "state", **self._scan()})
             elif event in (plate_created, plate_deleted):
                 index = getattr(ctx, "index", None)
+                kind = "delete" if event == plate_deleted else "create"
+                name = (getattr(ctx, "name", "") or "").strip()
+                shifted = _shifted_plate_indices(kind, index)
                 if isinstance(index, int):
                     _LIVE_PLATE_NAMES.pop(index, None)
-                    _forget_plate_path(index)
+                    if kind == "delete":
+                        _forget_plate_path(index)
                     _clear_stale(index)
                 else:
                     _clear_stale()
-                shifted = _shifted_plate_indices()
                 if shifted:
                     _mark_stale(shifted)
-                _forget_live_plates()
-                _clear_no_data()
-                self.post_message({"type": "state", **self._scan()})
+                # Never export from inside PlateCreated/PlateDeleted:
+                # OrcaSlicer can crash if the model is exported while it is
+                # renumbering/deleting a plate. Patch the cached plate map instead.
+                if _adjust_live_plate_cache(kind, index, name):
+                    _LIVE_PLATE_NAMES.clear()
+                    _clear_no_data()
+                    self.post_message({"type": "state", **self._scan()})
+                else:
+                    _clear_no_data()
+                    self.post_message({
+                        "type": "state",
+                        "reset": True,
+                        "note": _t("note.refresh_plate"),
+                    })
             elif event in object_events:
-                changed = _changed_plate_indices(ctx)
+                # Never re-export while Orca is deleting an object/plate:
+                # use the cached plate map and resolve the plate from ctx.
+                deleted_event = getattr(life, "ObjectDeleted", None)
+                changed = _changed_plate_indices(ctx, force=(event != deleted_event))
                 _mark_stale(changed if changed else None)
                 _LIVE_PLATE_NAMES.clear()
                 _clear_no_data()
