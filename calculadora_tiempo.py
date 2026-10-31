@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.8.5"
+# version = "0.8.6"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -24,6 +24,7 @@ _DEFAULT_LANGUAGE = "es"
 _SUPPORTED_LANGUAGES = ("es", "en")
 _LANGUAGE = None
 _SETTINGS_FILE = "settings.json"
+_PATHS_FILE = "gcode_paths.json"
 _CURRENT_PROJECT = None
 _CURRENT_SESSION = None
 _CURRENT_GCODE_PATHS = []
@@ -253,6 +254,49 @@ def _settings_file(create=False):
         except OSError:
             continue
     return None
+
+
+def _paths_file(create=False):
+    settings = _settings_file(create=create)
+    if not settings:
+        return None
+    return os.path.join(os.path.dirname(settings), _PATHS_FILE)
+
+
+def _read_paths_file():
+    path = _paths_file(create=False)
+    if not path:
+        return {}
+    data = _read_settings_file(path)
+    if not isinstance(data, dict):
+        return {}
+    projects = data.get("projects")
+    return projects if isinstance(projects, dict) else {}
+
+
+def _write_paths_file(projects):
+    path = _paths_file(create=True)
+    if not path:
+        return False
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(
+                {"version": 1, "projects": projects},
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+            f.write("\n")
+        os.replace(tmp, path)
+        return True
+    except Exception as exc:
+        print("[time-calc] no pude guardar las rutas: %s" % exc)
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
 
 
 def _read_settings_file(path):
@@ -547,6 +591,45 @@ def _project_stem(value):
     return base.strip().lower()
 
 
+def _project_key():
+    return _project_stem(_CURRENT_PROJECT) or "untitled"
+
+
+def _load_project_paths():
+    bucket = _read_paths_file().get(_project_key(), {})
+    if not isinstance(bucket, dict):
+        return
+    existing = {
+        index for index in (_gcode_index(path) for path in _CURRENT_GCODE_PATHS)
+        if index is not None
+    }
+    for raw_index, path in bucket.items():
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError):
+            continue
+        if index in existing:
+            continue
+        if not isinstance(path, str) or not os.path.isfile(path):
+            continue
+        _CURRENT_GCODE_PATHS.append(path)
+        existing.add(index)
+    _CURRENT_GCODE_PATHS.sort()
+
+
+def _save_project_paths():
+    bucket = {}
+    for path in _CURRENT_GCODE_PATHS:
+        if not os.path.isfile(path):
+            continue
+        index = _gcode_index(path)
+        if index is not None:
+            bucket[str(index)] = path
+    projects = _read_paths_file()
+    projects[_project_key()] = bucket
+    _write_paths_file(projects)
+
+
 def _project_matches(origin, project):
     want = _project_stem(project)
     if not want or want.startswith("untitled") or want in ("sin título", "sin titulo"):
@@ -578,6 +661,11 @@ def _gcode_files(folder):
     return [(None, name) for name in others]
 
 
+def _gcode_index(path):
+    match = re.search(r"\.(\d+)\.gcode$", os.path.basename(path), re.I)
+    return int(match.group(1)) if match else None
+
+
 def _record_gcode_path(path):
     global _CURRENT_SESSION
     if not path:
@@ -588,10 +676,17 @@ def _record_gcode_path(path):
         return
     if not os.path.isfile(full):
         return
+    index = _gcode_index(full)
+    if index is not None:
+        _CURRENT_GCODE_PATHS[:] = [
+            path for path in _CURRENT_GCODE_PATHS
+            if _gcode_index(path) != index
+        ]
     if full not in _CURRENT_GCODE_PATHS:
         _CURRENT_GCODE_PATHS.append(full)
         _CURRENT_GCODE_PATHS.sort()
     _CURRENT_SESSION = os.path.dirname(metadata)
+    _save_project_paths()
 
 
 def _session_from_gcode(path):
@@ -1392,9 +1487,10 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 targets = sorted(set(live.get("indices") or []))
                 if not targets:
                     targets = list(range(live["count"]))
-                base_path = next(
+                base_path = max(
                     (path for path in _CURRENT_GCODE_PATHS if os.path.isfile(path)),
-                    None,
+                    key=os.path.getmtime,
+                    default=None,
                 )
                 if base_path:
                     match = re.match(
@@ -1530,6 +1626,9 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 _CURRENT_SESSION = None
                 _CURRENT_GCODE_PATHS.clear()
                 _CURRENT_PROJECT = getattr(ctx, "name", None)
+                _load_project_paths()
+                if _CURRENT_GCODE_PATHS:
+                    _CURRENT_SESSION = _session_from_gcode(_CURRENT_GCODE_PATHS[0])
                 self.post_message({"type": "state", **self._scan()})
             elif event in (orca.LifecycleEvent.NewProject, orca.LifecycleEvent.ProjectClosed):
                 _STALE = False
@@ -1546,7 +1645,6 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 })
             elif event == orca.LifecycleEvent.SliceStarted:
                 _CURRENT_SESSION = None
-                _CURRENT_GCODE_PATHS.clear()
                 _clear_no_data()
                 self.post_message({
                     "type": "state",
