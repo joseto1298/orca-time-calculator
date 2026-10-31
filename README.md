@@ -25,7 +25,7 @@ Plugin que muestra la **hora actual** y, a partir de la estimación del laminado
 1. Abre OrcaSlicer.
 2. Ve a **Plugins → Install local plugin**.
 3. **Desactiva o elimina la versión anterior** antes de instalar otra; OrcaSlicer no la sustituye y dos copias activas provocan una colisión de nombre.
-4. Selecciona `calculadora_tiempo.py` o el wheel `dist/hora_de_finalizacion-0.8.13-py3-none-any.whl`.
+4. Selecciona `calculadora_tiempo.py` o el wheel `dist/hora_de_finalizacion-0.8.14-py3-none-any.whl`.
 5. Acepta el permiso de lectura de los `.gcode` concretos que exporta OrcaSlicer. El plugin lo solicita al detectar cada laminado; tras instalar una versión nueva hay que volver a aceptarlo. No recorre `%TEMP%` ni lista carpetas. El icono de la pestaña va incrustado en el `.py`; no hace falta copiar imágenes junto al plugin.
 
 ## Uso
@@ -34,7 +34,7 @@ Plugin que muestra la **hora actual** y, a partir de la estimación del laminado
 2. Abre la pestaña **Tiempo**.
 3. Pulsa **Refrescar** si acabas de laminar: fuerza una consulta del proyecto actual y de sus rutas de G-code, en orden de placa. Al volver a la pestaña se reutiliza la caché para que sea instantáneo.
 4. Alterna **Secuencial** / **Independiente** en el héroe para ver los fines acumulados o por placa.
-5. Añadir o borrar una placa se refleja al momento: la nueva aparece como “Sin laminar” y la borrada desaparece. Si mueves o cambias objetos, las placas afectadas se marcan como **Cambió** y se pide laminarlas de nuevo.
+5. Añadir o borrar una placa se refleja al momento: la nueva aparece como “Sin laminar” y la borrada desaparece. Las placas no afectadas conservan su tiempo; si al borrar una placa cambian los números de las demás, solo esas se marcan como **Cambió**. Si mueves o cambias objetos, se marcan únicamente las placas afectadas y se pide laminarlas de nuevo.
 6. La pestaña lee las placas actuales del proyecto, aunque no hayas guardado, para no mostrar G-code antiguo de placas borradas.
 7. Recuerda el último G-code de cada placa aunque lamines en varias tandas o reinicies Orca; si el fichero temporal ya no existe, esa placa vuelve a aparecer como “Sin laminar”.
 8. Si la placa está vacía, muestra un aviso y no recorre `%TEMP%` ni vuelve a pedir permisos.
@@ -88,7 +88,7 @@ Al modificar el plugin, **sube la versión** en el encabezado PEP 723 (`# versio
 ## Archivos
 
 - `calculadora_tiempo.py` — plugin completo (metadatos, captura del G-code y pestaña de UI).
-- `dist/hora_de_finalizacion-0.8.13-py3-none-any.whl` — paquete instalable con el plugin y el icono.
+- `dist/hora_de_finalizacion-0.8.14-py3-none-any.whl` — paquete instalable con el plugin y el icono.
 - `build_wheel.py` — genera el wheel a partir del `.py` y `3.png`.
 - `Captura de pantalla.png` — captura de la pestaña Tiempo usada en este README.
 - `AGENTS.md` — notas para asistentes/agentes que trabajen en el repositorio.

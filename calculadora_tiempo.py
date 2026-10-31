@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.8.13"
+# version = "0.8.14"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -486,6 +486,18 @@ def _changed_plate_indices(ctx):
                 found.update(object_plates.get(str(candidate), ()))
         found.update(_OBJECT_NAMES_HISTORY.get(name, ()))
     return found
+
+
+def _shifted_plate_indices():
+    if not _OBJECT_PLATES_HISTORY:
+        return set()
+    live = _live_plates(force=True) or {}
+    shifted = set()
+    for object_id, indices in (live.get("object_plates") or {}).items():
+        previous = _OBJECT_PLATES_HISTORY.get(str(object_id))
+        if previous is not None and set(indices) != set(previous):
+            shifted.update(indices)
+    return shifted
 
 
 def _stale_note():
@@ -1639,7 +1651,10 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                     "filament_g": filament_g,
                     "cost": cost,
                     "source": source,
-                    "stale": bool(path) and _plate_is_stale(index),
+                    "stale": (not is_empty) and (
+                        _plate_is_stale(index) if path
+                        else (not _STALE_ALL and index in _STALE_PLATES)
+                    ),
                 })
 
             if live and live.get("count"):
@@ -1844,6 +1859,9 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                     _clear_stale(index)
                 else:
                     _clear_stale()
+                shifted = _shifted_plate_indices()
+                if shifted:
+                    _mark_stale(shifted)
                 _forget_live_plates()
                 _clear_no_data()
                 self.post_message({"type": "state", **self._scan()})
