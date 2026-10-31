@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.8.6"
+# version = "0.8.7"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -40,6 +40,7 @@ _NO_DATA_NOTE = None
 _NO_DATA_AT = 0.0
 _NO_DATA_TTL = 30.0
 _ICON_PATH = None
+_READ_REQUESTED = set()
 
 _STRINGS = {
     "es": {
@@ -610,7 +611,7 @@ def _load_project_paths():
             continue
         if index in existing:
             continue
-        if not isinstance(path, str) or not os.path.isfile(path):
+        if not isinstance(path, str) or not path:
             continue
         _CURRENT_GCODE_PATHS.append(path)
         existing.add(index)
@@ -620,8 +621,6 @@ def _load_project_paths():
 def _save_project_paths():
     bucket = {}
     for path in _CURRENT_GCODE_PATHS:
-        if not os.path.isfile(path):
-            continue
         index = _gcode_index(path)
         if index is not None:
             bucket[str(index)] = path
@@ -666,6 +665,23 @@ def _gcode_index(path):
     return int(match.group(1)) if match else None
 
 
+def _request_read(paths):
+    pending = [
+        path for path in paths
+        if path and path not in _READ_REQUESTED
+    ]
+    if not pending:
+        return
+    requester = getattr(orca, "request_permissions", None)
+    if requester is None:
+        return
+    try:
+        requester(fs_read=pending)
+        _READ_REQUESTED.update(pending)
+    except Exception as exc:
+        print("[time-calc] no pude pedir permiso de lectura: %s" % exc)
+
+
 def _record_gcode_path(path):
     global _CURRENT_SESSION
     if not path:
@@ -674,7 +690,7 @@ def _record_gcode_path(path):
     metadata = os.path.dirname(full)
     if os.path.basename(metadata).lower() != "metadata":
         return
-    if not os.path.isfile(full):
+    if not full.lower().endswith(".gcode"):
         return
     index = _gcode_index(full)
     if index is not None:
@@ -686,6 +702,7 @@ def _record_gcode_path(path):
         _CURRENT_GCODE_PATHS.append(full)
         _CURRENT_GCODE_PATHS.sort()
     _CURRENT_SESSION = os.path.dirname(metadata)
+    _request_read([full])
     _save_project_paths()
 
 
@@ -1434,8 +1451,6 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 return {"note": _NO_DATA_NOTE}
             entries = []
             for path in _CURRENT_GCODE_PATHS:
-                if not os.path.isfile(path):
-                    continue
                 name = os.path.basename(path)
                 match = re.search(r"\.(\d+)\.gcode$", name, re.I)
                 index = int(match.group(1)) if match else None
@@ -1452,7 +1467,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
             # even when Orca only emitted an export event for the active one.
             live_gcode = live.get("gcode_files", {}) if live else {}
             for index, path in live_gcode.items():
-                if isinstance(index, int) and path and os.path.isfile(path):
+                if isinstance(index, int) and path:
                     by_index[index] = (index, os.path.basename(path), path)
 
             plates = []
@@ -1487,11 +1502,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 targets = sorted(set(live.get("indices") or []))
                 if not targets:
                     targets = list(range(live["count"]))
-                base_path = max(
-                    (path for path in _CURRENT_GCODE_PATHS if os.path.isfile(path)),
-                    key=os.path.getmtime,
-                    default=None,
-                )
+                base_path = _CURRENT_GCODE_PATHS[-1] if _CURRENT_GCODE_PATHS else None
                 if base_path:
                     match = re.match(
                         r"^\.(\d+)\.(\d+)\.gcode$",
@@ -1511,6 +1522,11 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                                     os.path.basename(candidate),
                                     candidate,
                                 )
+                _request_read([
+                    by_index[index][2]
+                    for index in targets
+                    if index in by_index
+                ])
                 for index in targets:
                     add_plate(index, by_index.get(index))
             else:
@@ -1518,6 +1534,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                     note = _t("note.slice_first")
                     _set_no_data(note)
                     return {"note": note}
+                _request_read([item[2] for item in entries])
                 for index, name, path in entries:
                     add_plate(index, (index, name, path))
 

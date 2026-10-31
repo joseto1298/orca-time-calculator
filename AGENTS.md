@@ -38,5 +38,5 @@
 - The duration inputs are intentionally `readonly`; plates render as kanban cards.
 - Duration formats handled: `; total estimated time:`, `; model printing time:`, `; estimated printing time (normal mode) =`, generic `; estimated printing time...=`, `; TIME: <sec>`, `; print time:`, plus `1:23:45` and `2d3h15m` via `_parse_duration`.
 - Filament/cost regexes prefer `total ...` lines and support multiextruder comma-separated values via `_sum_floats`.
-- The plugin does not request a directory-tree permission. Orca may prompt once for each exact `.gcode` path; do not reintroduce `%TEMP%` traversal or folder listings.
+- `_request_read()` asks for `fs_read` on each exact `.gcode` path as it is captured or loaded; cloud/local installs start with empty permissions, so this prompt is required. The plugin never requests a directory-tree permission; do not reintroduce `%TEMP%` traversal or folder listings.
 - Reset/error messages are pushed as `{"type":"state","reset":true,"note":...}`; JS `resetState()` clears duration, KPIs, hero, tag and plate cards before rendering.
