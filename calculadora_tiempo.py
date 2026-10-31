@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.8.0"
+# version = "0.8.1"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -968,7 +968,7 @@ PAGE = r"""<!DOCTYPE html>
       var meta = [];
       if (p.filament_g !== null && p.filament_g !== undefined) meta.push(p.filament_g.toFixed(1) + " g");
       if (p.cost !== null && p.cost !== undefined) meta.push(parseFloat(p.cost).toFixed(2));
-      var displayName = p.name || p.file || t("ui.plate_fallback", { n: num });
+      var displayName = p.name || t("ui.plate_fallback", { n: num });
       var title = esc(displayName);
       html +=
         "<div class='plate-card'>" +
