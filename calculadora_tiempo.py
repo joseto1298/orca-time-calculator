@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.8.2"
+# version = "0.8.3"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -283,6 +283,7 @@ def _saved_language():
     for path in _legacy_settings_files():
         if path not in files:
             files.append(path)
+    best = None
     for path in files:
         data = _read_settings_file(path)
         if not data:
@@ -290,11 +291,19 @@ def _saved_language():
         lang = data.get("language")
         if lang not in _SUPPORTED_LANGUAGES:
             continue
-        target = _settings_file(create=True)
-        if target and os.path.normcase(target) != os.path.normcase(path):
-            _write_settings(target, lang)
-        return lang
-    return None
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            mtime = 0
+        if best is None or mtime > best[0]:
+            best = (mtime, path, lang)
+    if best is None:
+        return None
+    _, path, lang = best
+    target = _settings_file(create=True)
+    if target and os.path.normcase(target) != os.path.normcase(path):
+        _write_settings(target, lang)
+    return lang
 
 
 def _current_language():
@@ -311,7 +320,17 @@ def _current_language():
 
 
 def _write_language(lang):
-    return _write_settings(_settings_file(create=True), lang)
+    saved = False
+    stable = _settings_file(create=True)
+    if stable:
+        saved = _write_settings(stable, lang) or saved
+    try:
+        current = os.path.join(_plugin_storage(), _SETTINGS_FILE)
+        if not stable or os.path.normcase(current) != os.path.normcase(stable):
+            saved = _write_settings(current, lang) or saved
+    except Exception:
+        pass
+    return saved
 
 
 def _set_language(lang):
