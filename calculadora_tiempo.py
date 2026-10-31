@@ -4,13 +4,14 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.7.17"
+# version = "0.8.0"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
 
 import base64
 import html
+import json
 import os
 import re
 import tempfile
@@ -19,6 +20,10 @@ import zipfile
 
 import orca
 
+_DEFAULT_LANGUAGE = "es"
+_SUPPORTED_LANGUAGES = ("es", "en")
+_LANGUAGE = None
+_SETTINGS_FILE = "settings.json"
 _CURRENT_PROJECT = None
 _CURRENT_SESSION = None
 _CURRENT_GCODE_PATHS = []
@@ -27,7 +32,6 @@ _LIVE_PLATES = None
 _LIVE_PLATES_AT = 0.0
 _LIVE_EXPORTING = False
 _STALE = False
-_STALE_NOTE = "Las placas cambiaron. Lamina de nuevo para actualizar los tiempos."
 _NAME_CACHE = {}
 _TAIL_CACHE = {}
 _SCANNING = False
@@ -35,7 +39,194 @@ _NO_DATA_NOTE = None
 _NO_DATA_AT = 0.0
 _NO_DATA_TTL = 30.0
 _ICON_PATH = None
+
+_STRINGS = {
+    "es": {
+        "tab.name": "Tiempo",
+        "ui.title": "Hora de Finalización",
+        "ui.subtitle": "Hora actual y estimación de cuándo termina la impresión.",
+        "ui.current_time": "Hora actual",
+        "ui.finish_at": "Terminará a las",
+        "ui.mode_seq": "Secuencial",
+        "ui.mode_ind": "Independiente",
+        "ui.mode_seq_hint": "Secuencial: cada placa empieza al terminar la anterior.",
+        "ui.mode_ind_hint": "Independiente: cada placa empieza ahora, por separado.",
+        "ui.no_data": "sin datos de laminado",
+        "ui.print_data": "Datos del laminado",
+        "ui.estimated_duration": "Duración estimada",
+        "ui.duration_placeholder": "p. ej. 5h 23m 12s",
+        "ui.filament": "Filamento",
+        "ui.weight": "Peso",
+        "ui.cost": "Coste",
+        "ui.diag_initial": "Lamina la pieza y pulsa Refrescar. Usaré el G-code exacto de ese laminado.",
+        "ui.refresh": "Refrescar",
+        "ui.loading": "Cargando datos",
+        "ui.plates": "Placas",
+        "ui.plate_finish": "Termina",
+        "ui.max_per_plate": "Máx. por placa · {value}",
+        "ui.total": "Total · {value}",
+        "ui.capture_ok": "Captura OK · fuente: {source}",
+        "ui.unknown": "desconocida",
+        "ui.plate_fallback": "Placa {n}",
+        "ui.language": "Idioma",
+        "ui.language_save_failed": "No se pudo guardar el idioma. Se mantiene el anterior.",
+        "note.updating": "Actualizando…",
+        "note.empty_plate": "La placa está vacía. Añade una pieza y lamina.",
+        "note.slice_first": "Lamina la pieza para localizar su G-code; después pulsa Refrescar.",
+        "note.no_valid_plates": "La carpeta de G-code no contiene placas válidas.",
+        "note.no_plate_time": "Ninguna placa tiene tiempo en el G-code.",
+        "note.scan_error": "Error leyendo la caché de OrcaSlicer: {error}",
+        "note.slice_failed": "El laminado falló: {detail}",
+        "note.slice_failed_detail": "sin detalle",
+        "note.slice_cancelled": "Laminado cancelado.",
+        "note.open_project": "Abre o lamina un proyecto para ver la estimación.",
+        "note.slicing": "Laminando…",
+        "note.stale": "Las placas cambiaron. Lamina de nuevo para actualizar los tiempos.",
+        "source.total_estimated": "tiempo total estimado",
+        "source.estimated_normal": "tiempo estimado (modo normal)",
+        "source.model_printing": "tiempo de impresión del modelo",
+        "source.estimated_printing": "tiempo de impresión estimado",
+        "source.time_seconds": "TIME (segundos)",
+        "source.print_time": "tiempo de impresión",
+        "source.sum_of_plates": "suma de {n} placas",
+        "source.sum_of_plates_one": "suma de 1 placa",
+        "source.unknown": "desconocida",
+    },
+    "en": {
+        "tab.name": "Time",
+        "ui.title": "Finish Time",
+        "ui.subtitle": "Current time and estimated print finish.",
+        "ui.current_time": "Current time",
+        "ui.finish_at": "Will finish at",
+        "ui.mode_seq": "Sequential",
+        "ui.mode_ind": "Independent",
+        "ui.mode_seq_hint": "Sequential: each plate starts when the previous one ends.",
+        "ui.mode_ind_hint": "Independent: each plate starts now, separately.",
+        "ui.no_data": "no slice data",
+        "ui.print_data": "Slice data",
+        "ui.estimated_duration": "Estimated duration",
+        "ui.duration_placeholder": "e.g. 5h 23m 12s",
+        "ui.filament": "Filament",
+        "ui.weight": "Weight",
+        "ui.cost": "Cost",
+        "ui.diag_initial": "Slice the model and press Refresh. I'll use the exact G-code from that slice.",
+        "ui.refresh": "Refresh",
+        "ui.loading": "Loading data",
+        "ui.plates": "Plates",
+        "ui.plate_finish": "Finishes",
+        "ui.max_per_plate": "Max per plate · {value}",
+        "ui.total": "Total · {value}",
+        "ui.capture_ok": "Capture OK · source: {source}",
+        "ui.unknown": "unknown",
+        "ui.plate_fallback": "Plate {n}",
+        "ui.language": "Language",
+        "ui.language_save_failed": "Could not save the language. Keeping the previous one.",
+        "note.updating": "Updating…",
+        "note.empty_plate": "The plate is empty. Add a model and slice.",
+        "note.slice_first": "Slice the model to locate its G-code, then press Refresh.",
+        "note.no_valid_plates": "The G-code folder has no valid plates.",
+        "note.no_plate_time": "No plate has a time in the G-code.",
+        "note.scan_error": "Error reading the OrcaSlicer cache: {error}",
+        "note.slice_failed": "Slicing failed: {detail}",
+        "note.slice_failed_detail": "no details",
+        "note.slice_cancelled": "Slicing cancelled.",
+        "note.open_project": "Open or slice a project to see the estimate.",
+        "note.slicing": "Slicing…",
+        "note.stale": "Plates changed. Slice again to update the times.",
+        "source.total_estimated": "total estimated time",
+        "source.estimated_normal": "estimated printing time (normal)",
+        "source.model_printing": "model printing time",
+        "source.estimated_printing": "estimated printing time",
+        "source.time_seconds": "TIME (seconds)",
+        "source.print_time": "print time",
+        "source.sum_of_plates": "sum of {n} plates",
+        "source.sum_of_plates_one": "sum of 1 plate",
+        "source.unknown": "unknown",
+    },
+}
+
 _ICON_B64 = "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"
+
+
+def _plugin_storage():
+    folder = str(orca.host.plugin.storage())
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def _read_settings():
+    try:
+        path = os.path.join(_plugin_storage(), _SETTINGS_FILE)
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _current_language():
+    global _LANGUAGE
+    if _LANGUAGE in _SUPPORTED_LANGUAGES:
+        return _LANGUAGE
+    saved = _read_settings().get("language")
+    _LANGUAGE = saved if saved in _SUPPORTED_LANGUAGES else _DEFAULT_LANGUAGE
+    return _LANGUAGE
+
+
+def _write_language(lang):
+    path = os.path.join(_plugin_storage(), _SETTINGS_FILE)
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "language": lang}, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.replace(tmp, path)
+        return True
+    except Exception as exc:
+        print("[time-calc] no pude guardar el idioma: %s" % exc)
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
+
+
+def _set_language(lang):
+    global _LANGUAGE
+    if lang not in _SUPPORTED_LANGUAGES:
+        return False
+    if not _write_language(lang):
+        return False
+    _LANGUAGE = lang
+    return True
+
+
+def _t(key, **params):
+    table = _STRINGS.get(_current_language(), {})
+    text = table.get(key)
+    if text is None:
+        text = _STRINGS[_DEFAULT_LANGUAGE].get(key, key)
+    if params:
+        try:
+            text = text.format(**params)
+        except (KeyError, ValueError):
+            pass
+    return text
+
+
+def _tn(one_key, many_key, n):
+    return _t(one_key if n == 1 else many_key, n=n)
+
+
+def _source_label(key):
+    if not key:
+        return _t("source.unknown")
+    label = _t("source." + key)
+    return label if label != "source." + key else key
+
+
+def _stale_note():
+    return _t("note.stale")
 
 
 def _icon_path():
@@ -99,34 +290,34 @@ def _extract_metrics(text):
     # Bambu Lab: total estimated time (incluye preparación) es lo más útil.
     m = re.search(r";\s*total estimated time:\s*([^;\n]+)", text, re.I)
     if m:
-        seconds, source = _parse_duration(m.group(1)), "total estimated time"
+        seconds, source = _parse_duration(m.group(1)), "total_estimated"
 
     if seconds is None:
         m = re.search(
             r";\s*estimated printing time \(normal mode\)\s*=\s*([^\n]+)", text, re.I
         )
         if m:
-            seconds, source = _parse_duration(m.group(1)), "estimated printing time (normal)"
+            seconds, source = _parse_duration(m.group(1)), "estimated_normal"
 
     if seconds is None:
         m = re.search(r";\s*model printing time:\s*([^;\n]+)", text, re.I)
         if m:
-            seconds, source = _parse_duration(m.group(1)), "model printing time"
+            seconds, source = _parse_duration(m.group(1)), "model_printing"
 
     if seconds is None:
         m = re.search(r";\s*estimated printing time[^\n=]*=\s*([^\n]+)", text, re.I)
         if m:
-            seconds, source = _parse_duration(m.group(1)), "estimated printing time"
+            seconds, source = _parse_duration(m.group(1)), "estimated_printing"
 
     if seconds is None:
         m = re.search(r";\s*TIME:\s*([\d.]+)", text, re.I)
         if m:
-            seconds, source = float(m.group(1)), "TIME (segundos)"
+            seconds, source = float(m.group(1)), "time_seconds"
 
     if seconds is None:
         m = re.search(r";\s*print time:\s*([^\n;]+)", text, re.I)
         if m:
-            seconds, source = _parse_duration(m.group(1)), "print time"
+            seconds, source = _parse_duration(m.group(1)), "print_time"
 
     return seconds, source
 
@@ -484,6 +675,11 @@ PAGE = r"""<!DOCTYPE html>
   }
   h1 { font-size: 16px; margin: 0 0 4px; font-weight: 600; }
   .sub { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+  .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .topbar .sub { margin-bottom: 16px; }
+  .lang-wrap { flex: 0 0 auto; }
+  .lang-wrap select { min-width: 110px; }
+  .lang-error { color: var(--warn); font-size: 11px; margin-top: 6px; }
   .hero {
     background: linear-gradient(180deg, #32363d 0%, #2b2f35 100%);
     border: 1px solid var(--border); border-radius: 10px;
@@ -508,9 +704,10 @@ PAGE = r"""<!DOCTYPE html>
     color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
   .field { display: flex; flex-direction: column; gap: 4px; }
   .field label { font-size: 12px; color: var(--muted); }
-  input, button { background: var(--panel2); color: var(--text);
+  input, button, select { background: var(--panel2); color: var(--text);
     border: 1px solid var(--border); border-radius: 6px;
     padding: 8px 10px; font-size: 14px; font-family: inherit; }
+  select:disabled { opacity: .6; cursor: wait; }
   input:focus { outline: none; border-color: var(--accent); }
   button { cursor: pointer; border: none; background: var(--accent); color: #1b1d20; font-weight: 600; }
   button.ghost { background: var(--panel2); color: var(--text); border: 1px solid var(--border); }
@@ -547,60 +744,112 @@ PAGE = r"""<!DOCTYPE html>
 </style>
 </head>
 <body>
-  <h1>Hora de Finalización</h1>
-  <div class="sub">Hora actual y estimación de cuándo termina la impresión.</div>
+  <div class="topbar">
+    <div>
+      <h1 data-i18n="ui.title">Hora de Finalización</h1>
+      <div class="sub" data-i18n="ui.subtitle">Hora actual y estimación de cuándo termina la impresión.</div>
+    </div>
+    <div class="lang-wrap">
+      <select id="lang" data-i18n-aria-label="ui.language" aria-label="Idioma">
+        <option value="es">Español</option>
+        <option value="en">English</option>
+      </select>
+      <div class="lang-error" id="langError" hidden></div>
+    </div>
+  </div>
 
   <div class="hero">
-    <div class="label">Hora actual</div>
+    <div class="label" data-i18n="ui.current_time">Hora actual</div>
     <div class="now" id="nowClock">--:--:--</div>
-    <div class="label" style="margin-top:14px;">Terminará a las</div>
+    <div class="label" style="margin-top:14px;" data-i18n="ui.finish_at">Terminará a las</div>
     <div class="finish"><em id="finishClock">--:--</em></div>
     <div class="day" id="finishDay"></div>
     <div class="modes">
-      <button class="mode-btn ghost" id="modeSeq">Secuencial</button>
-      <button class="mode-btn ghost active" id="modeInd">Independiente</button>
+      <button class="mode-btn ghost" id="modeSeq" data-i18n="ui.mode_seq">Secuencial</button>
+      <button class="mode-btn ghost active" id="modeInd" data-i18n="ui.mode_ind">Independiente</button>
     </div>
     <div class="mode-hint" id="modeHint">Independiente: cada placa empieza ahora, por separado.</div>
-    <div class="dur" id="durTag">sin datos de laminado</div>
+    <div class="dur" id="durTag" data-i18n="ui.no_data">sin datos de laminado</div>
   </div>
 
   <div class="card">
-    <h2>Datos del laminado</h2>
+    <h2 data-i18n="ui.print_data">Datos del laminado</h2>
     <div class="field" style="margin-bottom:10px;">
-      <label for="dur">Duración estimada</label>
-      <input id="dur" placeholder="p. ej. 5h 23m 12s" readonly>
+      <label for="dur" data-i18n="ui.estimated_duration">Duración estimada</label>
+      <input id="dur" data-i18n-placeholder="ui.duration_placeholder" placeholder="p. ej. 5h 23m 12s" readonly>
     </div>
     <div class="kpis">
-      <div class="kpi"><div class="k">Filamento</div><div class="v" id="printFil">—</div></div>
-      <div class="kpi"><div class="k">Peso</div><div class="v" id="printWeight">—</div></div>
-      <div class="kpi"><div class="k">Coste</div><div class="v" id="printCost">—</div></div>
+      <div class="kpi"><div class="k" data-i18n="ui.filament">Filamento</div><div class="v" id="printFil">—</div></div>
+      <div class="kpi"><div class="k" data-i18n="ui.weight">Peso</div><div class="v" id="printWeight">—</div></div>
+      <div class="kpi"><div class="k" data-i18n="ui.cost">Coste</div><div class="v" id="printCost">—</div></div>
     </div>
     <div class="diag warn" id="diag">Lamina la pieza y pulsa Refrescar. Usaré el G-code exacto de ese laminado.</div>
     <div class="loading-row">
-      <button class="ghost" id="refreshBtn">Refrescar</button>
-      <span class="spinner" id="loading" role="status" aria-label="Cargando datos" hidden></span>
+      <button class="ghost" id="refreshBtn" data-i18n="ui.refresh">Refrescar</button>
+      <span class="spinner" id="loading" role="status" data-i18n-aria-label="ui.loading" aria-label="Cargando datos" hidden></span>
     </div>
   </div>
 
   <div class="card" id="platesCard" style="display:none;">
-    <h2>Placas</h2>
+    <h2 data-i18n="ui.plates">Placas</h2>
     <div id="platesList" class="kanban"></div>
   </div>
 
 <script>
 (function () {
   var bridge = window.orca || (typeof orca !== "undefined" ? orca : null);
+  var I18N = __I18N__;
+  var LANG = "__LANG__";
   var loadingTimer = null;
+
+  function t(key, vars) {
+    var table = I18N[LANG] || I18N.es || {};
+    var text = table[key];
+    if (text === undefined) text = (I18N.es || {})[key] || key;
+    if (vars) {
+      for (var name in vars) {
+        if (Object.prototype.hasOwnProperty.call(vars, name)) {
+          text = text.split("{" + name + "}").join(String(vars[name]));
+        }
+      }
+    }
+    return text;
+  }
+
+  function applyI18n() {
+    if (document.documentElement) document.documentElement.lang = LANG;
+    var nodes = document.querySelectorAll("[data-i18n]");
+    for (var i = 0; i < nodes.length; i++) {
+      var key = nodes[i].getAttribute("data-i18n");
+      if (key) nodes[i].textContent = t(key);
+    }
+    var placeholders = document.querySelectorAll("[data-i18n-placeholder]");
+    for (var j = 0; j < placeholders.length; j++) {
+      var pkey = placeholders[j].getAttribute("data-i18n-placeholder");
+      if (pkey) placeholders[j].setAttribute("placeholder", t(pkey));
+    }
+    var aria = document.querySelectorAll("[data-i18n-aria-label]");
+    for (var k = 0; k < aria.length; k++) {
+      var akey = aria[k].getAttribute("data-i18n-aria-label");
+      if (akey) aria[k].setAttribute("aria-label", t(akey));
+    }
+    var select = document.getElementById("lang");
+    if (select) select.value = LANG;
+    var error = document.getElementById("langError");
+    if (error && !error.hidden) error.textContent = t("ui.language_save_failed");
+  }
 
   function setLoading(on) {
     var spinner = document.getElementById("loading");
     var button = document.getElementById("refreshBtn");
+    var select = document.getElementById("lang");
     if (loadingTimer && typeof clearTimeout === "function") {
       clearTimeout(loadingTimer);
     }
     loadingTimer = null;
     if (spinner) spinner.hidden = !on;
     if (button) button.disabled = !!on;
+    if (select) select.disabled = !!on;
     if (on && typeof setTimeout === "function") {
       loadingTimer = setTimeout(function () { setLoading(false); }, 20000);
     }
@@ -649,6 +898,9 @@ PAGE = r"""<!DOCTYPE html>
   }
 
   function fullDate(d) {
+    if (LANG === "en") {
+      return two(d.getMonth() + 1) + "/" + two(d.getDate()) + "/" + d.getFullYear();
+    }
     return two(d.getDate()) + "/" + two(d.getMonth() + 1) + "/" + d.getFullYear();
   }
 
@@ -678,11 +930,13 @@ PAGE = r"""<!DOCTYPE html>
     if (!horizon || horizon <= 0) {
       finishEl.textContent = "--:--";
       dayEl.textContent = "";
-      tagEl.textContent = DURATION_SECONDS !== null ? fmtDur(DURATION_SECONDS) : "sin datos de laminado";
+      tagEl.textContent = DURATION_SECONDS !== null ? fmtDur(DURATION_SECONDS) : t("ui.no_data");
       return;
     }
 
-    tagEl.textContent = (MODE === "ind" ? "Máx. por placa · " : "Total · ") + fmtDur(horizon);
+    tagEl.textContent = t(MODE === "ind" ? "ui.max_per_plate" : "ui.total", {
+      value: fmtDur(horizon)
+    });
     var finish = new Date(now.getTime() + horizon * 1000);
     finishEl.textContent = two(finish.getHours()) + ":" + two(finish.getMinutes());
     dayEl.textContent = fullDate(finish);
@@ -692,9 +946,9 @@ PAGE = r"""<!DOCTYPE html>
     MODE = mode;
     document.getElementById("modeSeq").classList.toggle("active", mode === "seq");
     document.getElementById("modeInd").classList.toggle("active", mode === "ind");
-    document.getElementById("modeHint").textContent = mode === "seq"
-      ? "Secuencial: cada placa empieza al terminar la anterior."
-      : "Independiente: cada placa empieza ahora, por separado.";
+    document.getElementById("modeHint").textContent = t(
+      mode === "seq" ? "ui.mode_seq_hint" : "ui.mode_ind_hint"
+    );
     tick();
   }
 
@@ -714,15 +968,16 @@ PAGE = r"""<!DOCTYPE html>
       var meta = [];
       if (p.filament_g !== null && p.filament_g !== undefined) meta.push(p.filament_g.toFixed(1) + " g");
       if (p.cost !== null && p.cost !== undefined) meta.push(parseFloat(p.cost).toFixed(2));
-      var title = esc(p.name || p.file || ("Placa " + num));
+      var displayName = p.name || p.file || t("ui.plate_fallback", { n: num });
+      var title = esc(displayName);
       html +=
         "<div class='plate-card'>" +
           "<div class='pc-head'><span class='pc-num'>" + num + "</span>" +
             "<span class='pc-name' title='" + title + "'>" + title + "</span></div>" +
-          "<div class='pc-label' style='margin-top:2px;'>Termina</div>" +
+          "<div class='pc-label' style='margin-top:2px;'>" + esc(t("ui.plate_finish")) + "</div>" +
           "<div class='pc-finish'>--:--</div>" +
           "<div class='pc-date'></div>" +
-          "<label class='pc-label' style='margin-top:8px;'>Duración estimada</label>" +
+          "<label class='pc-label' style='margin-top:8px;'>" + esc(t("ui.estimated_duration")) + "</label>" +
           "<input class='pc-dur' readonly value='" +
             (p.duration_seconds !== null && p.duration_seconds !== undefined ? fmtDur(p.duration_seconds) : "—") +
           "'>" +
@@ -762,20 +1017,30 @@ PAGE = r"""<!DOCTYPE html>
     document.getElementById("printCost").textContent = "—";
     document.getElementById("finishClock").textContent = "--:--";
     document.getElementById("finishDay").textContent = "";
-    document.getElementById("durTag").textContent = "sin datos de laminado";
+    document.getElementById("durTag").textContent = t("ui.no_data");
     document.getElementById("platesCard").style.display = "none";
     document.getElementById("platesList").innerHTML = "";
   }
 
   function applyState(state) {
     setLoading(false);
+    if (state && state.language && I18N[state.language] && state.language !== LANG) {
+      LANG = state.language;
+      applyI18n();
+      setMode(MODE);
+    }
+    var langError = document.getElementById("langError");
+    if (langError) {
+      langError.hidden = !(state && state.language_saved === false);
+      if (!langError.hidden) langError.textContent = t("ui.language_save_failed");
+    }
     var diag = document.getElementById("diag");
     resetState();
     if (!state || state.reset) {
       diag.className = "diag warn";
       diag.textContent = (state && state.note)
         ? String(state.note)
-        : "Lamina la pieza y pulsa Refrescar. Usaré el G-code exacto de ese laminado.";
+        : t("note.slice_first");
       tick();
       return;
     }
@@ -783,12 +1048,14 @@ PAGE = r"""<!DOCTYPE html>
       DURATION_SECONDS = state.duration_seconds;
       document.getElementById("dur").value = fmtDur(state.duration_seconds);
       diag.className = "diag ok";
-      diag.textContent = "Captura OK · fuente: " + (state.source || "desconocida");
+      diag.textContent = t("ui.capture_ok", {
+        source: state.source || t("ui.unknown")
+      });
     } else {
       diag.className = "diag warn";
       diag.textContent = state.note
         ? String(state.note)
-        : "Ninguna placa tiene tiempo en el G-code.";
+        : t("note.no_plate_time");
     }
     document.getElementById("printFil").textContent =
       (state.filament_mm !== null && state.filament_mm !== undefined)
@@ -801,6 +1068,18 @@ PAGE = r"""<!DOCTYPE html>
         ? parseFloat(state.cost).toFixed(2) : "—";
     renderPlates(state);
     tick();
+  }
+
+  function setLanguage(lang) {
+    if (lang !== "es" && lang !== "en") return;
+    LANG = lang;
+    applyI18n();
+    setMode(MODE);
+    tick();
+    setLoading(true);
+    if (bridge && bridge.postMessage) {
+      bridge.postMessage({ type: "set_language", language: lang });
+    }
   }
 
   function requestState() {
@@ -820,7 +1099,14 @@ PAGE = r"""<!DOCTYPE html>
   });
   document.getElementById("modeSeq").addEventListener("click", function () { setMode("seq"); });
   document.getElementById("modeInd").addEventListener("click", function () { setMode("ind"); });
+  var langSelect = document.getElementById("lang");
+  if (langSelect) {
+    langSelect.addEventListener("change", function () { setLanguage(langSelect.value); });
+  }
 
+  applyI18n();
+  var initialDiag = document.getElementById("diag");
+  if (initialDiag) initialDiag.textContent = t("ui.diag_initial");
   setMode(MODE);
   tick();
   requestState();
@@ -832,12 +1118,17 @@ PAGE = r"""<!DOCTYPE html>
 """
 
 
+def _render_page():
+    payload = json.dumps(_STRINGS, ensure_ascii=False).replace("</", "<\\/")
+    return PAGE.replace("__I18N__", payload).replace("__LANG__", _current_language())
+
+
 class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
     def get_name(self):
-        return "Tiempo"
+        return _t("tab.name")
 
     def get_ui(self):
-        return PAGE
+        return _render_page()
 
     def get_icon(self):
         return _icon_path()
@@ -845,20 +1136,36 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
     def on_message(self, data):
         if not isinstance(data, dict):
             return
-        if data.get("type") == "get_state":
-            self.post_message({"type": "state", **self._scan(force_live=True)})
+        kind = data.get("type")
+        if kind == "get_state":
+            self.post_message({
+                "type": "state",
+                "language": _current_language(),
+                **self._scan(force_live=True),
+            })
+        elif kind == "set_language":
+            lang = data.get("language")
+            saved = _set_language(lang)
+            if saved:
+                _clear_no_data()
+            self.post_message({
+                "type": "state",
+                "language": _current_language(),
+                "language_saved": saved,
+                **self._scan(force_live=True),
+            })
 
     def _scan(self, force_live=False):
         global _SCANNING
         if _SCANNING:
-            return {"note": "Actualizando…"}
+            return {"note": _t("note.updating")}
         _SCANNING = True
         try:
             if _STALE:
-                return {"note": _STALE_NOTE}
+                return {"note": _stale_note()}
             live = _live_plates(force=force_live)
             if live is not None and live.get("count") == 0:
-                return {"note": "La placa está vacía. Añade una pieza y lamina."}
+                return {"note": _t("note.empty_plate")}
             if _NO_DATA_NOTE and time.time() - _NO_DATA_AT < _NO_DATA_TTL:
                 return {"note": _NO_DATA_NOTE}
             entries = []
@@ -871,7 +1178,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 entries.append((index, name, path))
             entries.sort(key=lambda item: (item[0] is None, item[0], item[1]))
             if not entries:
-                note = "Lamina la pieza para localizar su G-code; después pulsa Refrescar."
+                note = _t("note.slice_first")
                 _set_no_data(note)
                 return {"note": note}
 
@@ -894,12 +1201,10 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 except Exception as exc:
                     print("[time-calc] error leyendo %s: %s" % (name, exc))
                     continue
-                ordinal = index if index is not None else len(plates)
-                plate_no = ordinal + 1
                 live_name = _LIVE_PLATE_NAMES.get(index) if index is not None else None
                 plates.append({
                     "index": index,
-                    "name": live_name or live_names.get(index) or ("Placa %d" % plate_no),
+                    "name": live_name or live_names.get(index) or "",
                     "file": name,
                     "duration_seconds": seconds,
                     "filament_mm": filament_mm,
@@ -909,7 +1214,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 })
 
             if not plates:
-                note = "La carpeta de G-code no contiene placas válidas."
+                note = _t("note.no_valid_plates")
                 _set_no_data(note)
                 return {"note": note}
             _clear_no_data()
@@ -925,6 +1230,14 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 if plate["cost"] is not None:
                     total_cost = (total_cost or 0) + plate["cost"]
 
+            if len(plates) > 1:
+                source = _tn(
+                    "source.sum_of_plates_one",
+                    "source.sum_of_plates",
+                    len(plates),
+                )
+            else:
+                source = _source_label(plates[0]["source"])
             data = {
                 "plates": plates,
                 "plate_count": len(plates),
@@ -932,15 +1245,15 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 "filament_mm": total_mm,
                 "filament_g": total_g,
                 "cost": total_cost,
-                "source": ("suma de %d placas" % len(plates)) if len(plates) > 1 else (plates[0]["source"] or "desconocida"),
-                "note": None if total_secs is not None else "Ninguna placa tiene tiempo en el G-code.",
+                "source": source,
+                "note": None if total_secs is not None else _t("note.no_plate_time"),
                 "ran_at": time.time(),
             }
             print("[time-calc] scan %d placas -> %s s" % (len(plates), total_secs))
             return data
         except Exception as exc:
             print("[time-calc] error en scan: %s" % exc)
-            return {"note": "Error leyendo la caché de OrcaSlicer: %s" % exc}
+            return {"note": _t("note.scan_error", error=exc)}
         finally:
             _SCANNING = False
 
@@ -974,14 +1287,14 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                     self.post_message({
                         "type": "state",
                         "reset": True,
-                        "note": "El laminado falló: %s" % (msg or "sin detalle"),
+                        "note": _t("note.slice_failed", detail=msg or _t("note.slice_failed_detail")),
                     })
                     return
                 if warn_code is not None and code == warn_code and "cancel" in msg.lower():
                     self.post_message({
                         "type": "state",
                         "reset": True,
-                        "note": "Laminado cancelado.",
+                        "note": _t("note.slice_cancelled"),
                     })
                     return
                 _STALE = False
@@ -1013,7 +1326,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 self.post_message({
                     "type": "state",
                     "reset": True,
-                    "note": "Abre o lamina un proyecto para ver la estimación.",
+                    "note": _t("note.open_project"),
                 })
             elif event == orca.LifecycleEvent.SliceStarted:
                 _CURRENT_SESSION = None
@@ -1022,7 +1335,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 self.post_message({
                     "type": "state",
                     "reset": True,
-                    "note": "Laminando…",
+                    "note": _t("note.slicing"),
                 })
             elif event == plate_renamed and not _STALE:
                 index = getattr(ctx, "index", None)
@@ -1040,7 +1353,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 self.post_message({
                     "type": "state",
                     "reset": True,
-                    "note": _STALE_NOTE,
+                    "note": _stale_note(),
                 })
         except Exception as exc:
             print("[time-calc] lifecycle %s: %s" % (event, exc))
