@@ -4,7 +4,7 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "Hora de Finalización"
-# version = "0.8.12"
+# version = "0.8.13"
 # description = "Muestra la hora actual y, usando la estimación del laminado, cuándo terminará la impresión."
 # author = "joseto1298"
 # ///
@@ -82,6 +82,7 @@ _STRINGS = {
         "ui.no_time": "Sin datos",
         "ui.changed": "Cambió",
         "ui.slice_again": "Lamina de nuevo",
+        "ui.empty_plate": "Vacía",
         "note.updating": "Actualizando…",
         "note.empty_plate": "La placa está vacía. Añade una pieza y lamina.",
         "note.slice_first": "Lamina la pieza para localizar su G-code; después pulsa Refrescar.",
@@ -140,6 +141,7 @@ _STRINGS = {
         "ui.no_time": "No data",
         "ui.changed": "Changed",
         "ui.slice_again": "Slice again",
+        "ui.empty_plate": "Empty",
         "note.updating": "Updating…",
         "note.empty_plate": "The plate is empty. Add a model and slice.",
         "note.slice_first": "Slice the model to locate its G-code, then press Refresh.",
@@ -845,6 +847,7 @@ def _plate_data_from_3mf(path):
             "gcode_files": {},
             "object_plates": {},
             "object_names": {},
+            "empty_indices": [],
         }
         _NAME_CACHE[key] = dict(data)
         return data
@@ -883,6 +886,9 @@ def _plate_data_from_3mf(path):
         name_match = re.search(r'<metadata key="name" value="([^"]*)"', body, re.I)
         if name_match:
             object_names[match.group(1)] = html.unescape(name_match.group(1))
+    occupied = set()
+    for plate_indices in object_plates.values():
+        occupied.update(plate_indices)
     data = {
         "count": len(blocks),
         "indices": sorted(set(indices)),
@@ -891,6 +897,7 @@ def _plate_data_from_3mf(path):
         "gcode_files": gcode_files,
         "object_plates": {key: sorted(value) for key, value in object_plates.items()},
         "object_names": object_names,
+        "empty_indices": sorted(set(indices) - occupied),
     }
     _NAME_CACHE[key] = dict(data)
     return data
@@ -1344,9 +1351,11 @@ PAGE = r"""<!DOCTYPE html>
       var title = esc(displayName);
       var durationText = p.stale
         ? t("ui.slice_again")
-        : (p.duration_seconds !== null && p.duration_seconds !== undefined)
-          ? fmtDur(p.duration_seconds)
-          : t(p.sliced ? "ui.no_time" : "ui.not_sliced");
+        : p.empty
+          ? t("ui.empty_plate")
+          : (p.duration_seconds !== null && p.duration_seconds !== undefined)
+            ? fmtDur(p.duration_seconds)
+            : t(p.sliced ? "ui.no_time" : "ui.not_sliced");
       var staleBadge = p.stale
         ? "<span class='pc-stale'>" + esc(t("ui.changed")) + "</span>"
         : "";
@@ -1382,7 +1391,7 @@ PAGE = r"""<!DOCTYPE html>
       var d = PLATES[i].duration_seconds;
       if (d === null || d === undefined) {
         if (finishes[i]) finishes[i].textContent = t(
-          PLATES[i].sliced ? "ui.no_time" : "ui.not_sliced"
+          PLATES[i].empty ? "ui.empty_plate" : (PLATES[i].sliced ? "ui.no_time" : "ui.not_sliced")
         );
         if (dates[i]) dates[i].textContent = "";
         continue;
@@ -1590,16 +1599,21 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
 
             # The live 3MF knows the last G-code path for every sliced plate,
             # even when Orca only emitted an export event for the active one.
+            empty = set(live.get("empty_indices") or []) if live else set()
             live_gcode = live.get("gcode_files", {}) if live else {}
             for index, path in live_gcode.items():
-                if isinstance(index, int) and path:
+                if isinstance(index, int) and path and index not in empty:
                     by_index[index] = (index, os.path.basename(path), path)
 
             plates = []
             unsliced = 0
+            empty_count = 0
 
             def add_plate(index, entry):
-                nonlocal unsliced
+                nonlocal unsliced, empty_count
+                is_empty = index in empty
+                if is_empty:
+                    entry = None
                 name = entry[1] if entry else ""
                 path = entry[2] if entry else None
                 seconds = source = filament_mm = filament_g = cost = None
@@ -1609,13 +1623,17 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                     except Exception as exc:
                         print("[time-calc] error leyendo %s: %s" % (name, exc))
                 if not path:
-                    unsliced += 1
+                    if is_empty:
+                        empty_count += 1
+                    else:
+                        unsliced += 1
                 live_name = _LIVE_PLATE_NAMES.get(index) if index is not None else None
                 plates.append({
                     "index": index,
                     "name": live_name or live_names.get(index) or "",
                     "file": name,
                     "sliced": bool(path),
+                    "empty": is_empty,
                     "duration_seconds": seconds,
                     "filament_mm": filament_mm,
                     "filament_g": filament_g,
@@ -1651,10 +1669,10 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 _request_read([
                     by_index[index][2]
                     for index in targets
-                    if index in by_index
+                    if index in by_index and index not in empty
                 ])
                 for index in targets:
-                    add_plate(index, by_index.get(index))
+                    add_plate(index, None if index in empty else by_index.get(index))
             else:
                 if not entries:
                     note = _t("note.slice_first")
@@ -1703,6 +1721,7 @@ class TimeCalculatorPage(orca.pages.PagesPluginCapabilityBase):
                 "plates": plates,
                 "plate_count": len(plates),
                 "unsliced_count": unsliced,
+                "empty_count": empty_count,
                 "stale_count": stale_count,
                 "duration_seconds": total_secs,
                 "filament_mm": total_mm,
